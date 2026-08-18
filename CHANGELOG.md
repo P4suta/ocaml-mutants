@@ -7,6 +7,14 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Fixed
 
+- The mutation score no longer counts unconfirmed timeouts as detected.
+  `summary.detected` is now `killed + timeout - unconfirmed_timeouts`, with the
+  new `unconfirmed_timeouts` counter recorded in the summary and surfaced in
+  the terminal totals. Unconfirmed timeouts exist only in interrupted runs,
+  where cancellation skips the serial confirmation retry; completed runs are
+  unaffected. Pre-release `run-report-v1` schema change: previously stored
+  local reports no longer decode (fail-closed); clear them with
+  `ocaml-mutants cache clean`.
 - The first cross-OS, cross-compiler CI run in the project's history found and
   fixed four latent problems: OCaml 5.4 never compiled
   (`Shape.Uid.Local_opaque_item` is 5.5-only; uid ownership now goes through
@@ -75,7 +83,8 @@ for its CLI, TOML schema, and JSON schema.
   new `fixtures/match` E2E pins the combined catalog and proves the
   instrumented tree compiles under the fatal-warning dev profile.
 - A derived mutation score in the terminal summary and the native run report:
-  `summary.detected` (`killed + timeout`) and `summary.score`
+  `summary.detected` (kills plus serially confirmed timeouts) and
+  `summary.score`
   (`100 × detected / (detected + unexpected_survivors)`, `null` when the
   denominator is zero). Expected survivors and infrastructure results stay out
   of the denominator, so a score of 100 coincides with exit code 0. The score

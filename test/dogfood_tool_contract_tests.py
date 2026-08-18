@@ -153,6 +153,7 @@ def valid_report() -> dict[str, object]:
             "killed": 1,
             "survived": 0,
             "timeout": 0,
+            "unconfirmed_timeouts": 0,
             "inconclusive": 0,
             "error": 0,
             "expected_survivors": 0,

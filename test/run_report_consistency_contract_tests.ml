@@ -218,6 +218,7 @@ let test_summary_is_derived () =
       "killed";
       "survived";
       "timeout";
+      "unconfirmed_timeouts";
       "inconclusive";
       "error";
       "expected_survivors";
@@ -406,6 +407,33 @@ let test_execution_evidence_is_self_consistent () =
        (map_member "stdout" (replace_member "total_bytes" (`Int 99)))
        encoded)
 
+let timed_out_mutant =
+  mutant ~path:"lib/timed_out.ml" ~source:"true" ~rule_name:"true-to-false@1"
+    ~replacement:"false"
+
+(* An unconfirmed timeout exists only in an interrupted run, where cancellation
+   skipped the serial confirmation retry. It must round-trip and must never
+   count as detected. *)
+let test_unconfirmed_timeout_is_not_detected () =
+  let base = base_run () in
+  let run =
+    {
+      base with
+      results = base.results @ [ result timed_out_mutant Core.Outcome.Timeout ];
+    }
+  in
+  let summary =
+    Yojson.Safe.Util.member "summary" (Engine.Run_store.run_to_yojson run)
+  in
+  let field name = Yojson.Safe.Util.(summary |> member name |> to_int) in
+  Alcotest.(check int) "timeout counts the outcome" 1 (field "timeout");
+  Alcotest.(check int)
+    "the unconfirmed timeout is reported" 1
+    (field "unconfirmed_timeouts");
+  Alcotest.(check int)
+    "detected excludes the unconfirmed timeout" 1 (field "detected");
+  check_round_trip "interrupted run with an unconfirmed timeout" run
+
 let () =
   Alcotest.run "Native run report consistency"
     [
@@ -414,6 +442,8 @@ let () =
           Alcotest.test_case "complete and partial witnesses round trip" `Quick
             test_completeness_round_trip;
           Alcotest.test_case "summary is derived" `Quick test_summary_is_derived;
+          Alcotest.test_case "unconfirmed timeout is not detected" `Quick
+            test_unconfirmed_timeout_is_not_detected;
           Alcotest.test_case "status matches failure" `Quick
             test_status_and_failure_are_consistent;
           Alcotest.test_case "mutant sets are unique and disjoint" `Quick

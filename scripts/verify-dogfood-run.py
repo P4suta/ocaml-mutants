@@ -190,6 +190,8 @@ def verify_report(report: dict[str, Any], exit_code: int) -> tuple[int, int, int
         "killed": counts["killed"],
         "survived": counts["survived"],
         "timeout": counts["timeout"],
+        # Every timeout above was proven confirmed, so the counter must be 0.
+        "unconfirmed_timeouts": 0,
         "inconclusive": counts["inconclusive"],
         "error": counts["error"],
         "expected_survivors": sum(
