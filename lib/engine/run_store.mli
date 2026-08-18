@@ -183,6 +183,11 @@ val load_mutant :
   expected:Core.Mutant.t ->
   mutant_result option
 
+val cacheable_result : mutant_result -> bool
+(** [cacheable_result result] holds when the outcome is admissible evidence for
+    the shared cache: kills, survivors, and serially confirmed timeouts.
+    Inconclusive results, errors, and unconfirmed timeouts are never stored. *)
+
 val save_mutant : t -> key:string -> mutant_result -> (unit, Error.t) result
 val load_run : t -> string -> (run, Error.t) result
 val run_to_yojson : run -> Yojson.Safe.t

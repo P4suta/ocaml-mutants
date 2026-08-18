@@ -615,9 +615,7 @@ let run_mutants ~cancel ~root ~config ~store ~key ~sources ~fresh ~timeout
       (fun result ->
         if
           result.Run_store.expected_reason = None
-          && (result.Run_store.outcome <> Core.Outcome.Timeout
-             || result.timeout_confirmed)
-          && not (Core.Outcome.is_error result.outcome)
+          && Run_store.cacheable_result result
         then
           match Run_store.save_mutant store ~key result with
           | Ok () -> ()

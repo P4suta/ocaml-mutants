@@ -2882,8 +2882,6 @@ let outcome_path (store : t) ~key ~id =
   Ok (store_path store outcome)
 
 let cacheable_result result =
-  (not (Core.Outcome.is_error result.outcome))
-  &&
   match result.outcome with
   | Core.Outcome.Timeout -> result.timeout_confirmed
   | Core.Outcome.Killed | Core.Outcome.Survived -> true
