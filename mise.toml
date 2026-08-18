@@ -54,6 +54,11 @@ description = "Run unit and property tests used by the first dogfood stage"
 run = "opam exec -- dune build @dogfood-fast"
 run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && opam exec -- dune build @dogfood-fast'
 
+[tasks.schema-validation]
+description = "Validate the public JSON schemas and emitted documents with Python"
+run = "opam exec -- dune build @schema-validation"
+run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && opam exec -- dune build @schema-validation'
+
 [tasks.dogfood-full]
 description = "Run fixture E2E tests and public JSON schema validation"
 run = "opam exec -- dune build @dogfood-full"
@@ -128,6 +133,7 @@ description = "Run the local release-readiness checks sequentially"
 run = [
   "mise run build",
   "mise run test",
+  "mise run schema-validation",
   "mise run dogfood-fast",
   "mise run fmt",
   "mise run doc",

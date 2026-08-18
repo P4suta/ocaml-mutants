@@ -45,6 +45,12 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Changed
 
+- `dune runtest` is pure OCaml: the Python-driven schema-validation and
+  dogfood-verifier rules moved off the `runtest` alias onto the new
+  `@schema-validation` alias (and the existing `@dogfood-fast`/`@dogfood-full`
+  copies). CI and the release gates build `@schema-validation` explicitly, so
+  coverage is unchanged while the opam with-test build no longer needs Python
+  — the opam-repository sandbox provides none.
 - The `balanced`, `strong`, and `all` profiles are now real, monotonically
   inclusive tiers instead of aliases for one rule set: `balanced` (default)
   drops `if-branch` and `sequence-deletion`, `strong` adds `if-branch`, and
