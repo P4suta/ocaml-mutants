@@ -355,6 +355,34 @@ CAMLprim value ocaml_mutants_test_witness_exited(value witness_value) {
 #endif
 }
 
+/* The image seen through the retained witness handle itself: present only
+   while the witness's process object still names an executable. Separating
+   this from the fresh by-PID lookup distinguishes a genuinely alive
+   descendant from a PID recycled to an unrelated process. */
+CAMLprim value ocaml_mutants_test_witness_handle_image(value witness_value) {
+  CAMLparam1(witness_value);
+  CAMLlocal2(result, image_value);
+#ifdef _WIN32
+  {
+    struct interrupt_witness *witness =
+        (struct interrupt_witness *)Data_custom_val(witness_value);
+    wchar_t image[MAX_PATH];
+    DWORD length = MAX_PATH;
+    if (witness->closed || witness->process == NULL) CAMLreturn(Val_int(0));
+    if (!QueryFullProcessImageNameW(witness->process, 0, image, &length))
+      CAMLreturn(Val_int(0));
+    image_value = caml_copy_string_of_os(image);
+    result = caml_alloc(1, 0);
+    Store_field(result, 0, image_value);
+    CAMLreturn(result);
+  }
+#else
+  (void)witness_value;
+  (void)image_value;
+  CAMLreturn(Val_int(0));
+#endif
+}
+
 CAMLprim value ocaml_mutants_test_witness_image(value pid_value) {
   CAMLparam1(pid_value);
   CAMLlocal2(result, image_value);
