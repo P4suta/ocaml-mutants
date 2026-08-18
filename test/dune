@@ -1,0 +1,400 @@
+(test
+ (name unit_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest qcheck-alcotest)
+ (deps
+  (source_tree fixtures/basic)))
+
+(rule
+ (alias dogfood-fast)
+ (deps
+  (source_tree fixtures/basic))
+ (action
+  (run %{exe:unit_tests.exe})))
+
+(test
+ (name operator_spec_contract_tests)
+ (libraries ocaml_mutants_core alcotest compiler-libs.common))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:operator_spec_contract_tests.exe})))
+
+(test
+ (name boolean_shadow_parity_contract_tests)
+ (libraries
+  ocaml_mutants_core
+  ocaml_mutants_engine
+  alcotest
+  compiler-libs.common))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:boolean_shadow_parity_contract_tests.exe})))
+
+(test
+ (name binary_shadow_parity_contract_tests)
+ (libraries
+  ocaml_mutants_core
+  ocaml_mutants_engine
+  alcotest
+  compiler-libs.common))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:binary_shadow_parity_contract_tests.exe})))
+
+(test
+ (name boolean_connective_shadow_parity_contract_tests)
+ (libraries
+  ocaml_mutants_core
+  ocaml_mutants_engine
+  alcotest
+  compiler-libs.common))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:boolean_connective_shadow_parity_contract_tests.exe})))
+
+(test
+ (name config_contract_tests)
+ (libraries ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:config_contract_tests.exe})))
+
+(test
+ (name process_contract_tests)
+ (libraries ocaml_mutants_engine alcotest threads))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:process_contract_tests.exe})))
+
+(test
+ (name changed_contract_tests)
+ (libraries ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:changed_contract_tests.exe})))
+
+(test
+ (name dune_adapter_contract_tests)
+ (libraries ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:dune_adapter_contract_tests.exe})))
+
+(test
+ (name baseline_contract_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:baseline_contract_tests.exe})))
+
+(test
+ (name reservation_contract_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:reservation_contract_tests.exe})))
+
+(test
+ (name maintenance_lease_contract_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:maintenance_lease_contract_tests.exe})))
+
+(test
+ (name report_contract_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:report_contract_tests.exe})))
+
+(test
+ (name run_report_consistency_contract_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest yojson))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:run_report_consistency_contract_tests.exe})))
+
+(test
+ (name cache_fs_contract_tests)
+ (libraries ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:cache_fs_contract_tests.exe})))
+
+(test
+ (name dir_cap_contract_tests)
+ (libraries ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:dir_cap_contract_tests.exe})))
+
+(test
+ (name dir_cap_system_contract_tests)
+ (libraries ocaml_mutants_engine alcotest unix))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:dir_cap_system_contract_tests.exe})))
+
+(test
+ (name workspace_snapshot_contract_tests)
+ (libraries ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:workspace_snapshot_contract_tests.exe})))
+
+(rule
+ (alias runtest)
+ (deps
+  dogfood_tool_contract_tests.py
+  ../scripts/verify-workspace-manifest.py
+  ../scripts/verify-dogfood-run.py
+  ../schema/run-report-v1.schema.json)
+ (action
+  (run
+   python
+   %{dep:dogfood_tool_contract_tests.py}
+   %{dep:../scripts/verify-workspace-manifest.py}
+   %{dep:../scripts/verify-dogfood-run.py}
+   %{dep:../schema/run-report-v1.schema.json})))
+
+(rule
+ (alias dogfood-fast)
+ (deps
+  dogfood_tool_contract_tests.py
+  ../scripts/verify-workspace-manifest.py
+  ../scripts/verify-dogfood-run.py
+  ../schema/run-report-v1.schema.json)
+ (action
+  (run
+   python
+   %{dep:dogfood_tool_contract_tests.py}
+   %{dep:../scripts/verify-workspace-manifest.py}
+   %{dep:../scripts/verify-dogfood-run.py}
+   %{dep:../schema/run-report-v1.schema.json})))
+
+(test
+ (name expectation_contract_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine yojson)
+ (action
+  (run %{test} %{exe:../bin/main.exe})))
+
+(rule
+ (alias dogfood-full)
+ (action
+  (run %{exe:expectation_contract_tests.exe} %{exe:../bin/main.exe})))
+
+(test
+ (name cli_lifecycle_contract_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine yojson)
+ (action
+  (run %{test} %{exe:../bin/main.exe})))
+
+(rule
+ (alias dogfood-full)
+ (action
+  (run %{exe:cli_lifecycle_contract_tests.exe} %{exe:../bin/main.exe})))
+
+(test
+ (name cli_interrupt_contract_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine mtime.clock.os yojson)
+ (foreign_stubs
+  (language c)
+  (names cli_interrupt_launcher_stubs))
+ (action
+  (run %{test} %{exe:../bin/main.exe})))
+
+(rule
+ (alias dogfood-full)
+ (action
+  (run %{exe:cli_interrupt_contract_tests.exe} %{exe:../bin/main.exe})))
+
+(test
+ (name e2e_tests)
+ (libraries ocaml_mutants_engine yojson)
+ (deps
+  (source_tree fixtures/basic)
+  (source_tree fixtures/baseline-failure)
+  (source_tree fixtures/custom-command)
+  (source_tree fixtures/executable)
+  (source_tree fixtures/ppx)
+  (source_tree fixtures/ppx-imprecise)
+  (source_tree fixtures/private-library)
+  (source_tree fixtures/root-test)
+  (source_tree fixtures/timeout))
+ (action
+  (run
+   %{test}
+   %{exe:../bin/main.exe}
+   %{dep:fixtures/basic/dune-project}
+   %{dep:fixtures/baseline-failure/dune-project}
+   %{dep:fixtures/custom-command/dune-project}
+   %{dep:fixtures/executable/dune-project}
+   %{dep:fixtures/ppx/dune-project}
+   %{dep:fixtures/ppx-imprecise/dune-project}
+   %{dep:fixtures/private-library/dune-project}
+   %{dep:fixtures/root-test/dune-project}
+   %{dep:fixtures/timeout/dune-project})))
+
+(rule
+ (alias dogfood-full)
+ (deps
+  (source_tree fixtures/basic)
+  (source_tree fixtures/baseline-failure)
+  (source_tree fixtures/custom-command)
+  (source_tree fixtures/executable)
+  (source_tree fixtures/ppx)
+  (source_tree fixtures/ppx-imprecise)
+  (source_tree fixtures/private-library)
+  (source_tree fixtures/root-test)
+  (source_tree fixtures/timeout))
+ (action
+  (run
+   %{exe:e2e_tests.exe}
+   %{exe:../bin/main.exe}
+   %{dep:fixtures/basic/dune-project}
+   %{dep:fixtures/baseline-failure/dune-project}
+   %{dep:fixtures/custom-command/dune-project}
+   %{dep:fixtures/executable/dune-project}
+   %{dep:fixtures/ppx/dune-project}
+   %{dep:fixtures/ppx-imprecise/dune-project}
+   %{dep:fixtures/private-library/dune-project}
+   %{dep:fixtures/root-test/dune-project}
+   %{dep:fixtures/timeout/dune-project})))
+
+(rule
+ (alias runtest)
+ (deps
+  validate_schemas.py
+  ../schema/catalog-v1.schema.json
+  ../schema/run-report-v1.schema.json
+  ../schema/mutation-testing-report-v2.schema.json
+  vendor/stryker-mutator/mutation-testing-report-schema-v2.json
+  vendor/stryker-mutator/LICENSE
+  vendor/stryker-mutator/PROVENANCE.json
+  fixtures/reports/mutation-testing-report-v2.json
+  (source_tree fixtures/custom-command))
+ (action
+  (run
+   python
+   %{dep:validate_schemas.py}
+   %{exe:../bin/main.exe}
+   %{dep:fixtures/custom-command/dune-project}
+   %{dep:../schema/catalog-v1.schema.json}
+   %{dep:../schema/run-report-v1.schema.json}
+   %{dep:../schema/mutation-testing-report-v2.schema.json}
+   %{dep:vendor/stryker-mutator/mutation-testing-report-schema-v2.json}
+   %{dep:vendor/stryker-mutator/LICENSE}
+   %{dep:vendor/stryker-mutator/PROVENANCE.json}
+   %{dep:fixtures/reports/mutation-testing-report-v2.json})))
+
+(test
+ (name condition_shadow_parity_contract_tests)
+ (libraries
+  ocaml_mutants_core
+  ocaml_mutants_engine
+  alcotest
+  compiler-libs.common))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:condition_shadow_parity_contract_tests.exe})))
+
+(test
+ (name if_branch_shadow_parity_contract_tests)
+ (libraries
+  ocaml_mutants_core
+  ocaml_mutants_engine
+  alcotest
+  compiler-libs.common))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:if_branch_shadow_parity_contract_tests.exe})))
+
+(test
+ (name sequence_shadow_parity_contract_tests)
+ (libraries
+  ocaml_mutants_core
+  ocaml_mutants_engine
+  alcotest
+  compiler-libs.common))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:sequence_shadow_parity_contract_tests.exe})))
+
+(test
+ (name return_shadow_parity_contract_tests)
+ (libraries
+  ocaml_mutants_core
+  ocaml_mutants_engine
+  alcotest
+  compiler-libs.common))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:return_shadow_parity_contract_tests.exe})))
+
+(rule
+ (alias dogfood-full)
+ (deps
+  validate_schemas.py
+  ../schema/catalog-v1.schema.json
+  ../schema/run-report-v1.schema.json
+  ../schema/mutation-testing-report-v2.schema.json
+  vendor/stryker-mutator/mutation-testing-report-schema-v2.json
+  vendor/stryker-mutator/LICENSE
+  vendor/stryker-mutator/PROVENANCE.json
+  fixtures/reports/mutation-testing-report-v2.json
+  (source_tree fixtures/custom-command))
+ (action
+  (run
+   python
+   %{dep:validate_schemas.py}
+   %{exe:../bin/main.exe}
+   %{dep:fixtures/custom-command/dune-project}
+   %{dep:../schema/catalog-v1.schema.json}
+   %{dep:../schema/run-report-v1.schema.json}
+   %{dep:../schema/mutation-testing-report-v2.schema.json}
+   %{dep:vendor/stryker-mutator/mutation-testing-report-schema-v2.json}
+   %{dep:vendor/stryker-mutator/LICENSE}
+   %{dep:vendor/stryker-mutator/PROVENANCE.json}
+   %{dep:fixtures/reports/mutation-testing-report-v2.json})))

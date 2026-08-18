@@ -1,0 +1,7 @@
+(install
+ (section share)
+ (package ocaml-mutants)
+ (files
+  catalog-v1.schema.json
+  run-report-v1.schema.json
+  mutation-testing-report-v2.schema.json))

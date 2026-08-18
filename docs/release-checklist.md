@@ -1,0 +1,72 @@
+# Release checklist
+
+- [ ] Run `mise install` and `mise run bootstrap`, confirm Python is exactly
+  3.13.7 and `jsonschema==4.26.0`, and run `python -m pip check`
+- [ ] `opam lint ocaml-mutants.opam`
+- [ ] `dune build @all`
+- [ ] `dune runtest`
+- [ ] `dune build @fmt`
+- [ ] `dune build @doc`
+- [ ] Run `typos`, `taplo check` over every repository TOML file, and
+  `actionlint .github/workflows/ci.yml`
+- [ ] Run `committed` over the release commit range and review every failure
+- [ ] Build and install the opam package in a clean switch
+- [ ] Confirm the installed `ocaml-mutants --version`, `dune-project` version,
+  release notes, tag, and opam release version all agree exactly
+- [ ] Run fixture E2E tests on Windows, Ubuntu, and macOS
+- [ ] Confirm timeout and Ctrl-C leave no child or grandchild process
+- [ ] Inject snapshot and reservation cleanup failures, plus signal-router
+  initialization failure before work, and confirm the authoritative report is
+  committed once with the same reportable failure and exit decision returned
+  by the CLI
+- [ ] Interrupt during report commit and prove the process-lifetime
+  subscription remains active until publication completes, then deactivates
+  without an OS-handler restoration step
+- [ ] Confirm TTY, redirected, `CI=true`, and `NO_COLOR` output
+- [ ] Validate real CLI output against `schema/run-report-v1.schema.json`,
+  `schema/catalog-v1.schema.json`, and
+  `schema/mutation-testing-report-v2.schema.json`
+- [ ] Verify the vendored upstream schema at
+  `test/vendor/stryker-mutator/mutation-testing-report-schema-v2.json` remains
+  pinned to tag `v2.0.5`, commit
+  `8c3f6c7d34953aa2758a514728e78866e7b9c269`, and SHA-256
+  `404575e9264686dbf85c399f6531fdb489bebc3146e7e1d793b8083bc6a041ae`;
+  retain its exact provenance and license evidence, and validate every Stryker
+  projection against both that official schema and the local exact-surface
+  schema
+- [ ] Generate the current repository's Balanced catalog twice through an
+  external stage-0 binary and compare canonical JSON plus the ordered full-ID
+  sequence
+- [ ] Compare the fixed `fixtures/basic` Balanced catalog with its reviewed
+  31-full-ID golden; use this source-stable gate, not a cross-version
+  self-catalog hash, to detect operator semantic drift
+- [ ] Run the production/compatibility parity contracts for all 30
+  `Operator.Spec` rules and reject any missing, extra, reordered, rejected, or
+  duplicate candidate
+- [ ] Run against a dirty workspace and compare every file digest and Git status
+- [ ] Verify cache reuse, corrupt-entry misses, concurrent writes, and
+  source/config/toolchain/environment invalidation
+- [ ] Verify cache GC and clean cannot acquire an exclusive maintenance lease
+  while any process holds a live run reservation
+- [ ] Run the directory-capability race suite on POSIX and Windows, proving
+  cache create/write/GC/clean never follows a swapped symlink or junction
+- [ ] Run native single-leaf materialization, owner-private directory/file
+  creation, captured file/empty-directory deletion, shared/exclusive locking,
+  and atomic no-replace/replace publication fault and contention contracts on
+  Windows
+- [ ] Close and exercise every production `Dir_cap.System` `Unsupported`
+  required by supported run/cache paths on POSIX, including missing-root and
+  owner-private directory creation, captured deletion, atomic publication, and
+  recursive deletion authority with mount-boundary proof; a remaining
+  `Unsupported` is a release hold for that platform
+- [ ] Confirm the install contains the CLI, all three schemas, and the English
+  schema reference, but no installed OCaml library API
+- [ ] Run `mise run dogfood`; require a complete native report with no unexpected
+  survivor, inconclusive/error/not-run result, or stale/unfulfilled/unevaluated
+  expectation, and an unchanged source-workspace manifest
+- [ ] Run `mise run corpus-check` and `mise run corpus-unit`, then run the full
+  networked `mise run corpus` gate against every manifest-pinned revision
+- [ ] Review Mutaml comparison and third-party acknowledgements
+- [ ] Review `CHANGELOG.md` and `RELEASE_NOTES.md`
+- [ ] Create and sign the `0.1.0` tag only after approval
+- [ ] Submit to opam-repository only after approval

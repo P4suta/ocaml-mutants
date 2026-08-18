@@ -1,0 +1,11 @@
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      run: opam exec -- dune build @fmt
+    typos:
+      run: typos
+    toml:
+      glob: "*.toml"
+      run: taplo check {staged_files}
+

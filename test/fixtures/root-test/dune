@@ -1,0 +1,8 @@
+(library
+ (name root_subject)
+ (modules subject))
+
+(test
+ (name root_test)
+ (modules root_test)
+ (libraries root_subject))

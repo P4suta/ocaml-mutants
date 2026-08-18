@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (public_name ocaml-mutants)
+ (package ocaml-mutants)
+ (libraries ocaml_mutants_core ocaml_mutants_engine cmdliner unix))

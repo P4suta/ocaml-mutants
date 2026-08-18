@@ -1,0 +1,4 @@
+(test
+ (name test_fixture_math)
+ (libraries fixture_math))
+

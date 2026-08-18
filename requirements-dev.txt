@@ -1,0 +1,2 @@
+# Development and release-gate dependency; the installed CLI does not use Python.
+jsonschema==4.26.0

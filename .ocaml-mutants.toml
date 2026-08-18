@@ -1,0 +1,25 @@
+version = 1
+
+[mutation]
+profile = "balanced"
+include = ["bin/**/*.ml", "lib/**/*.ml"]
+exclude = ["**/_build/**", "**/test/**", "**/tests/**"]
+
+[test]
+baseline_runs = 3
+parallel_safe = false
+
+[[test.stages]]
+name = "fast"
+command = ["dune", "build", "@dogfood-fast"]
+
+[[test.stages]]
+name = "full"
+command = ["dune", "runtest", "--force"]
+
+[execution]
+jobs = 1
+
+[cache]
+# Automatic reuse stays proof-gated off until every external input is keyed.
+mode = "auto"

@@ -1,0 +1,4 @@
+(install
+ (section share)
+ (package ocaml-mutants)
+ (files json-schema.md))

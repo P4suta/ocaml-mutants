@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        ocaml: ["5.4.1", "5.5.0"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml }}
+          dune-cache: true
+      - run: python -m pip install jsonschema==4.26.0
+      - run: opam install . --deps-only --with-test --with-doc
+      - run: opam exec -- dune build @all
+      - run: opam exec -- dune runtest
+      - run: opam exec -- dune build @fmt
+      - run: opam exec -- dune build @doc
+      - run: opam exec -- dune build @install
+      - run: opam lint ocaml-mutants.opam
+
+  dune-minimum:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4.1"
+          dune-cache: true
+      - run: opam pin add dune 3.21.0 -y
+      - run: python -m pip install jsonschema==4.26.0
+      - run: opam install . --deps-only --with-test --with-doc
+      - run: opam exec -- dune build @all @fmt @doc @install
+      - run: opam exec -- dune runtest
+
+  package-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.5.0"
+          dune-cache: true
+      - run: python -m pip install jsonschema==4.26.0
+      - run: opam install . --deps-only --with-test --with-doc
+      - run: opam install . --with-test --with-doc
+      - run: opam exec -- ocaml-mutants --version
+      - run: test -f "$(opam var share)/ocaml-mutants/run-report-v1.schema.json"
+      - run: test -f "$(opam var share)/ocaml-mutants/catalog-v1.schema.json"
+      - run: test -f "$(opam var share)/ocaml-mutants/json-schema.md"
+      - run: test -z "$(find "$(opam var lib)/ocaml-mutants" -name '*.cmi' -print -quit)"

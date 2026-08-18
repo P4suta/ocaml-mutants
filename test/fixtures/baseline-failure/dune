@@ -1,0 +1,8 @@
+(library
+ (name baseline_subject)
+ (modules candidate))
+
+(test
+ (name fails)
+ (modules fails)
+ (libraries baseline_subject))

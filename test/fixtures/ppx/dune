@@ -1,0 +1,11 @@
+(executable
+ (name identity_preprocessor)
+ (modules identity_preprocessor))
+
+(library
+ (name ppx_fixture)
+ (modules ppx_fixture)
+ (preprocess
+  (action
+   (run %{exe:identity_preprocessor.exe} %{input-file}))))
+

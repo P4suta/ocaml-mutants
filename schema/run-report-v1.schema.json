@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ocaml-mutants/ocaml-mutants/schema/run-report-v1.schema.json",
+  "title": "ocaml-mutants run-report-v1",
+  "type": "object",
+  "required": ["document_type", "schema_version", "run_id", "status", "started_at", "finished_at", "workspace", "profile", "selection", "test", "cache", "summary", "mutants", "not_run", "expectations", "failure", "skips", "warnings"],
+  "properties": {
+    "document_type": { "const": "ocaml-mutants.run-report-v1" },
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["completed", "interrupted", "failed"] },
+    "started_at": { "type": "string", "minLength": 1 },
+    "finished_at": { "type": "string", "minLength": 1 },
+    "workspace": {
+      "type": "object",
+      "required": ["digest", "toolchain"],
+      "properties": {
+        "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "toolchain": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "profile": { "enum": ["balanced", "strong", "all"] },
+    "selection": {
+      "type": "object",
+      "required": ["description"],
+      "properties": { "description": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "test": {
+      "type": "object",
+      "required": ["command", "baseline_duration_seconds", "timeout_seconds", "stages"],
+      "properties": {
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "baseline_duration_seconds": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "timeout_seconds": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "stages": { "type": "array", "items": { "$ref": "#/$defs/baseline_stage" } }
+      },
+      "additionalProperties": false
+    },
+    "cache": {
+      "type": "object",
+      "required": ["mode", "key"],
+      "properties": {
+        "mode": { "enum": ["auto", "on", "off"] },
+        "key": { "type": "string", "pattern": "^(unavailable|[0-9a-f]{64})$" }
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["kind", "total", "executed", "not_run", "killed", "survived", "timeout", "inconclusive", "error", "expected_survivors", "unexpected_survivors", "unfulfilled_expectations"],
+      "properties": {
+        "kind": { "enum": ["complete", "partial"] },
+        "total": { "type": "integer", "minimum": 0 },
+        "executed": { "type": "integer", "minimum": 0 },
+        "not_run": { "type": "integer", "minimum": 0 },
+        "killed": { "type": "integer", "minimum": 0 },
+        "survived": { "type": "integer", "minimum": 0 },
+        "timeout": { "type": "integer", "minimum": 0 },
+        "inconclusive": { "type": "integer", "minimum": 0 },
+        "error": { "type": "integer", "minimum": 0 },
+        "expected_survivors": { "type": "integer", "minimum": 0 },
+        "unexpected_survivors": { "type": "integer", "minimum": 0 },
+        "unfulfilled_expectations": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "mutants": { "type": "array", "items": { "$ref": "#/$defs/result" } },
+    "not_run": { "type": "array", "items": { "$ref": "#/$defs/mutant" } },
+    "expectations": { "type": "array", "items": { "$ref": "#/$defs/expectation_evaluation" } },
+    "failure": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/failure" }] },
+    "skips": { "type": "array", "items": { "$ref": "#/$defs/skip" } },
+    "warnings": { "type": "array", "items": { "$ref": "#/$defs/warning" } }
+  },
+  "$defs": {
+    "range": {
+      "type": "object",
+      "required": ["start_byte", "end_byte", "start_line", "start_column", "end_line", "end_column"],
+      "properties": {
+        "start_byte": { "type": "integer", "minimum": 0 },
+        "end_byte": { "type": "integer", "minimum": 1 },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "start_column": { "type": "integer", "minimum": 0 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "end_column": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "mutant": {
+      "type": "object",
+      "required": ["id", "full_id", "path", "range", "family", "rule", "original", "replacement", "source_digest"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+        "full_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "path": { "type": "string", "minLength": 1 },
+        "range": { "$ref": "#/$defs/range" },
+        "family": { "type": "string", "minLength": 1 },
+        "rule": { "type": "string", "pattern": "^[a-z0-9-]+@[1-9][0-9]*$" },
+        "original": { "type": "string", "minLength": 1 },
+        "replacement": { "type": "string", "minLength": 1 },
+        "source_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "captured": {
+      "type": "object",
+      "required": ["contents", "truncated", "total_bytes"],
+      "properties": {
+        "contents": { "type": "string" },
+        "truncated": { "type": "boolean" },
+        "total_bytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "stage_result": {
+      "type": "object",
+      "required": ["name", "status", "duration_seconds"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "minLength": 1 },
+        "duration_seconds": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "baseline_stage": {
+      "type": "object",
+      "required": ["name", "command", "baseline_runs_seconds", "slowest_baseline_seconds"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "baseline_runs_seconds": { "type": "array", "minItems": 1, "items": { "type": "number", "minimum": 0 } },
+        "slowest_baseline_seconds": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "expectation": {
+      "type": "object",
+      "required": ["reason", "status", "detail"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["fulfilled", "unfulfilled-killed", "unfulfilled-confirmed-timeout", "inconclusive", "error"] },
+        "detail": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "enum": ["inconclusive", "error"] } } },
+          "then": { "properties": { "detail": { "type": "string" } } },
+          "else": { "properties": { "detail": { "type": "null" } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "expectation_evaluation": {
+      "type": "object",
+      "required": ["mutant_id", "reason", "status", "detail"],
+      "properties": {
+        "mutant_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "reason": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["fulfilled", "unfulfilled-killed", "unfulfilled-confirmed-timeout", "inconclusive", "error", "stale", "not-evaluated"] },
+        "detail": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "enum": ["inconclusive", "error"] } } },
+          "then": { "properties": { "detail": { "type": "string" } } },
+          "else": { "properties": { "detail": { "type": "null" } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "retry_attempt": {
+      "type": "object",
+      "required": ["outcome", "error", "duration_seconds", "stages", "stdout", "stderr"],
+      "properties": {
+        "outcome": { "enum": ["killed", "survived", "timeout", "inconclusive", "error"] },
+        "error": { "type": ["string", "null"] },
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "stages": { "type": "array", "items": { "$ref": "#/$defs/stage_result" } },
+        "stdout": { "$ref": "#/$defs/captured" },
+        "stderr": { "$ref": "#/$defs/captured" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "enum": ["inconclusive", "error"] } } },
+          "then": { "properties": { "error": { "type": "string" } } },
+          "else": { "properties": { "error": { "type": "null" } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "timeout_retry": {
+      "type": "object",
+      "required": ["initial_timeout", "serial_retry"],
+      "properties": {
+        "initial_timeout": {
+          "allOf": [
+            { "$ref": "#/$defs/retry_attempt" },
+            { "properties": { "outcome": { "const": "timeout" } } }
+          ]
+        },
+        "serial_retry": { "$ref": "#/$defs/retry_attempt" }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": ["mutant", "outcome", "error", "duration_seconds", "cached", "stages", "timeout_confirmed", "timeout_retry", "expected_survivor", "expectation", "stdout", "stderr"],
+      "properties": {
+        "mutant": { "$ref": "#/$defs/mutant" },
+        "outcome": { "enum": ["killed", "survived", "timeout", "inconclusive", "error"] },
+        "error": { "type": ["string", "null"] },
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "cached": { "type": "boolean" },
+        "stages": { "type": "array", "items": { "$ref": "#/$defs/stage_result" } },
+        "timeout_confirmed": { "type": "boolean" },
+        "timeout_retry": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/timeout_retry" }] },
+        "expected_survivor": { "type": "boolean" },
+        "expectation": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/expectation" }] },
+        "stdout": { "$ref": "#/$defs/captured" },
+        "stderr": { "$ref": "#/$defs/captured" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "enum": ["inconclusive", "error"] } } },
+          "then": { "properties": { "error": { "type": "string" } } },
+          "else": { "properties": { "error": { "type": "null" } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "failure": {
+      "type": "object",
+      "required": ["phase", "cause", "message", "context", "suppressed"],
+      "properties": {
+        "phase": { "type": "string" },
+        "cause": {
+          "enum": [
+            "invalid-input",
+            "workspace-violation",
+            "decode-failure",
+            "process-failure",
+            "baseline-failure",
+            "invariant-violation",
+            "resource-busy",
+            "io-failure",
+            "corrupt-cache",
+            "interrupted"
+          ]
+        },
+        "message": { "type": "string" },
+        "context": { "type": "object", "additionalProperties": { "type": "string" } },
+        "suppressed": { "type": "array", "items": { "$ref": "#/$defs/failure" } }
+      },
+      "additionalProperties": false
+    },
+    "skip": {
+      "type": "object",
+      "required": ["reason", "count", "examples"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "count": { "type": "integer", "minimum": 1 },
+        "examples": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "warning": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

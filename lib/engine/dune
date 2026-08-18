@@ -1,0 +1,20 @@
+(library
+ (name ocaml_mutants_engine)
+ (libraries
+  ocaml_mutants_core
+  csexp
+  otoml
+  fpath
+  fmt
+  logs
+  mtime
+  mtime.clock.os
+  ptime
+  unix
+  threads
+  compiler-libs.common
+  digestif
+  yojson)
+ (foreign_stubs
+  (language c)
+  (names process_stubs signal_stubs dir_cap_stubs)))

@@ -1,0 +1,4 @@
+version = 1
+
+[mutation]
+include = ["ppx_fixture.ml"]

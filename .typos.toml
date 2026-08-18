@@ -1,0 +1,8 @@
+[files]
+extend-exclude = ["_build", "_opam", "test/fixtures"]
+
+[default.extend-words]
+csexp = "csexp"
+Typedtree = "Typedtree"
+
+Tast = "Tast"

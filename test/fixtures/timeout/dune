@@ -1,0 +1,8 @@
+(library
+ (name timeout_subject)
+ (modules candidate))
+
+(test
+ (name timeout_test)
+ (modules timeout_test)
+ (libraries timeout_subject unix))

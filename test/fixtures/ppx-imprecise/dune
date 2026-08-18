@@ -1,0 +1,10 @@
+(executable
+ (name imprecise_preprocessor)
+ (modules imprecise_preprocessor))
+
+(library
+ (name ppx_imprecise_fixture)
+ (modules ppx_imprecise_fixture)
+ (preprocess
+  (action
+   (run %{exe:imprecise_preprocessor.exe} %{input-file}))))

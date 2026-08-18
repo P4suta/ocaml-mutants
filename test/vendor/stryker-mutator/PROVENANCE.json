@@ -1,0 +1,18 @@
+{
+  "name": "mutation-testing-report-schema",
+  "version": "2.0.5",
+  "repository": "https://github.com/stryker-mutator/mutation-testing-elements",
+  "tag": "v2.0.5",
+  "commit": "8c3f6c7d34953aa2758a514728e78866e7b9c269",
+  "schema": {
+    "path": "packages/report-schema/src/mutation-testing-report-schema.json",
+    "source": "https://raw.githubusercontent.com/stryker-mutator/mutation-testing-elements/8c3f6c7d34953aa2758a514728e78866e7b9c269/packages/report-schema/src/mutation-testing-report-schema.json",
+    "sha256": "404575e9264686dbf85c399f6531fdb489bebc3146e7e1d793b8083bc6a041ae"
+  },
+  "license": {
+    "spdx": "Apache-2.0",
+    "path": "LICENSE",
+    "source": "https://raw.githubusercontent.com/stryker-mutator/mutation-testing-elements/8c3f6c7d34953aa2758a514728e78866e7b9c269/LICENSE",
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  }
+}

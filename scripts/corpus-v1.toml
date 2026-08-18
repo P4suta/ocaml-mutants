@@ -1,0 +1,114 @@
+# SPDX-FileCopyrightText: 2026 ocaml-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+format_version = 1
+profile = "balanced"
+catalog_repetitions = 2
+sample_count_per_rule = 5
+cache_namespace = "pinned-corpus-v1"
+ownership_id = "ocaml-mutants-pinned-corpus-v1"
+compiler_package = "ocaml-base-compiler.5.5.0"
+diagnostic_capture_bytes = 262144
+structured_output_bytes = 67108864
+
+[mutation]
+jobs = 1
+test_timeout_seconds = 600.0
+cache_mode = "on"
+
+[command_timeouts_seconds]
+git_clone = 1800.0
+git_fetch = 1800.0
+git_inspect = 300.0
+git_checkout = 600.0
+opam_init = 1800.0
+opam_switch_create = 10800.0
+opam_inspect = 300.0
+stage0_dependencies = 7200.0
+stage0_build = 3600.0
+corpus_dependencies = 10800.0
+catalog = 3600.0
+mutation_run = 86400.0
+process_termination = 30.0
+
+[artifacts]
+engine_excluded_roots = ["_build", "_opam"]
+corpus_excluded_roots = ["_build"]
+
+[commands]
+opam_init = ["opam", "init", "--bare", "--no-setup", "--yes"]
+opam_init_windows_extra = [
+  "--cygwin-internal-install",
+  "--cygwin-extra-packages=mingw64-x86_64-gcc-core,mingw64-x86_64-gcc-g++",
+]
+opam_switch_create = [
+  "opam",
+  "switch",
+  "create",
+  "{switch}",
+  "{compiler_package}",
+  "--yes",
+]
+stage0_dependencies = [
+  "opam",
+  "install",
+  "--switch={switch}",
+  "--deps-only",
+  "--with-test",
+  "--with-doc",
+  "--yes",
+  ".",
+]
+stage0_build = [
+  "opam",
+  "exec",
+  "--switch={switch}",
+  "--",
+  "dune",
+  "build",
+  "--build-dir={stage0_build_dir}",
+  "bin/main.exe",
+]
+corpus_dependencies = [
+  "opam",
+  "install",
+  "--switch={switch}",
+  "--deps-only",
+  "--with-test",
+  "--yes",
+  ".",
+]
+
+[stage0]
+built_executable = "{stage0_build_dir}/default/bin/main.exe"
+installed_name = "ocaml-mutants-stage0.exe"
+
+[[projects]]
+name = "cmdliner"
+version = "2.1.1"
+repository = "https://github.com/dbuenzli/cmdliner.git"
+commit = "d8eb07b7879432636e6ecf4057b16b30b4095cda"
+selection = "all"
+cache_namespace = "cmdliner-2.1.1"
+include = ["src/**/*.ml"]
+test_command = ["dune", "runtest", "--force"]
+
+[[projects]]
+name = "alcotest"
+version = "1.9.1"
+repository = "https://github.com/mirage/alcotest.git"
+commit = "bcb1466eb13f2512049252d374938680cc20b87e"
+selection = "first-per-rule"
+cache_namespace = "alcotest-1.9.1"
+include = ["src/**/*.ml"]
+test_command = ["dune", "runtest", "--force"]
+
+[[projects]]
+name = "ppxlib"
+version = "0.38.0"
+repository = "https://github.com/ocaml-ppx/ppxlib.git"
+commit = "09660e9d9e153d2dbe47ac621e695d7de717eb65"
+selection = "first-per-rule"
+cache_namespace = "ppxlib-0.38.0"
+include = ["src/**/*.ml"]
+test_command = ["dune", "runtest", "--force"]

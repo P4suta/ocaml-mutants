@@ -1,0 +1,9 @@
+(library
+ (name internal)
+ (modules internal))
+
+(test
+ (name check)
+ (modules check)
+ (libraries internal))
+

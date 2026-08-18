@@ -1,0 +1,5 @@
+version=0.28.1
+profile=conventional
+break-cases=fit
+wrap-comments=true
+

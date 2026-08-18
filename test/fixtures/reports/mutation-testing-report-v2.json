@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "2",
+  "thresholds": { "high": 80, "low": 60 },
+  "files": {
+    "lib/example.ml": {
+      "language": "ocaml",
+      "source": "true\n",
+      "mutants": [
+        {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "mutatorName": "BooleanLiteral",
+          "replacement": "false",
+          "location": {
+            "start": { "line": 1, "column": 1 },
+            "end": { "line": 1, "column": 5 }
+          },
+          "status": "Killed"
+        },
+        {
+          "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "mutatorName": "BooleanLiteral",
+          "replacement": "Stdlib.not true",
+          "location": {
+            "start": { "line": 1, "column": 1 },
+            "end": { "line": 1, "column": 5 }
+          },
+          "status": "Ignored",
+          "statusReason": "Expected survivor fulfilled: equivalent in this fixture"
+        }
+      ]
+    }
+  }
+}

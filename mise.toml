@@ -1,0 +1,125 @@
+# SPDX-FileCopyrightText: 2026 ocaml-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# The dotfiles-managed global mise configuration intentionally contains no
+# language runtimes. Development-only Python and opam are pinned here; OCaml
+# itself lives in the repo-local switch at ./_opam.
+[tools]
+python = "3.13.7"
+lefthook = "2.1.9"
+committed = "1.1.11"
+just = "1.50.0"
+typos = "1.48.0"
+taplo = "0.10.0"
+actionlint = "1.7.12"
+
+[tools.opam]
+version = "2.5.2"
+
+[tools.opam.platforms]
+windows-x64 = { asset_pattern = "opam-2.5.2-x86_64-windows.exe", bin = "opam.exe" }
+linux-x64 = { asset_pattern = "opam-2.5.2-x86_64-linux", bin = "opam" }
+linux-arm64 = { asset_pattern = "opam-2.5.2-arm64-linux", bin = "opam" }
+macos-x64 = { asset_pattern = "opam-2.5.2-x86_64-macos", bin = "opam" }
+macos-arm64 = { asset_pattern = "opam-2.5.2-arm64-macos", bin = "opam" }
+[tasks.bootstrap]
+description = "Create the project-local OCaml 5.5.0 switch and install development dependencies"
+run = """
+python -m pip install --disable-pip-version-check --requirement requirements-dev.txt
+opam init --bare --no-setup --yes
+opam switch create . ocaml-base-compiler.5.5.0 --no-install --yes || opam switch set .
+opam install . --deps-only --with-test --with-doc --yes
+opam install ocamlformat.0.28.1 ocaml-lsp-server utop --yes
+"""
+run_windows = '''
+set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%"
+python -m pip install --disable-pip-version-check --requirement requirements-dev.txt
+opam init --bare --no-setup --yes --cygwin-internal-install --cygwin-extra-packages=mingw64-x86_64-gcc-core,mingw64-x86_64-gcc-g++
+opam switch create . ocaml-base-compiler.5.5.0 --no-install --yes || opam switch set .
+opam install . --deps-only --with-test --with-doc --yes
+opam install ocamlformat.0.28.1 ocaml-lsp-server utop --yes
+'''
+[tasks.build]
+description = "Build every package target"
+run = "opam exec -- dune build @all"
+run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && opam exec -- dune build @all'
+
+[tasks.test]
+description = "Run the complete test suite"
+run = "opam exec -- dune runtest"
+run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && opam exec -- dune runtest'
+
+[tasks.dogfood-fast]
+description = "Run unit and property tests used by the first dogfood stage"
+run = "opam exec -- dune build @dogfood-fast"
+run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && opam exec -- dune build @dogfood-fast'
+
+[tasks.dogfood-full]
+description = "Run fixture E2E tests and public JSON schema validation"
+run = "opam exec -- dune build @dogfood-full"
+run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && opam exec -- dune build @dogfood-full'
+
+[tasks.dogfood-list]
+description = "Generate the Balanced catalog twice with an external stage-0 CLI and prove determinism"
+run = "sh scripts/dogfood-list.sh"
+run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && pwsh -NoLogo -NoProfile -NonInteractive -File scripts\dogfood-list.ps1'
+
+[tasks.dogfood]
+description = "Run the complete Balanced self-dogfood gate with resumable explicit caching"
+run = "sh scripts/dogfood.sh"
+run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && pwsh -NoLogo -NoProfile -NonInteractive -File scripts\dogfood.ps1'
+
+[tasks.corpus-check]
+description = "Validate the pinned corpus manifest without cache or network access"
+run = "python -B scripts/corpus_gate.py check --manifest scripts/corpus-v1.toml"
+
+[tasks.corpus-unit]
+description = "Run pure pinned corpus manifest and selection contracts"
+run = "python -B scripts/test_corpus_gate.py"
+
+[tasks.corpus]
+description = "Run the manifest-pinned local corpus gate in its owned OS cache"
+run = "python -B scripts/corpus_gate.py run --manifest scripts/corpus-v1.toml"
+run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && python -B scripts\corpus_gate.py run --manifest scripts\corpus-v1.toml'
+
+[tasks.fmt]
+description = "Check OCaml formatting"
+run = "opam exec -- dune build @fmt"
+run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && opam exec -- dune build @fmt'
+
+[tasks.doc]
+description = "Build API documentation"
+run = "opam exec -- dune build @doc"
+run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && opam exec -- dune build @doc'
+
+[tasks.lint]
+description = "Validate opam package metadata"
+run = "opam lint ocaml-mutants.opam"
+
+[tasks.install-check]
+description = "Build and verify the intentionally narrow install surface"
+run = [
+  "opam exec -- dune build @install",
+  "python scripts/verify-install-layout.py _build/install/default",
+]
+run_windows = [
+  'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && opam exec -- dune build @install',
+  "python scripts/verify-install-layout.py _build/install/default",
+]
+
+[tasks.check]
+description = "Run the local release-readiness checks sequentially"
+run = [
+  "mise run build",
+  "mise run test",
+  "mise run fmt",
+  "mise run doc",
+  "mise run lint",
+  "mise run install-check",
+  "mise run corpus-check",
+  "mise run corpus-unit",
+]
+
+[tasks.hooks]
+description = "Install the git hooks"
+run = "lefthook install"
