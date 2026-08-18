@@ -12,14 +12,6 @@ let name = function
   | Inconclusive _ -> "inconclusive"
   | Error _ -> "error"
 
-let is_detected = function
-  | Killed | Timeout -> true
-  | Survived | Inconclusive _ | Error _ -> false
-
-let is_error = function
-  | Error _ | Inconclusive _ -> true
-  | Killed | Survived | Timeout -> false
-
 let of_string = function
   | "killed" -> Ok Killed
   | "survived" -> Ok Survived
