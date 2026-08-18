@@ -71,6 +71,9 @@ opam exec -- dune build @all
 opam exec -- dune runtest
 ```
 
+`dune runtest` is pure OCaml; Python (with the pinned `jsonschema`) is needed
+only for the `@schema-validation` and dogfood gates.
+
 ## Quick start
 
 This pre-release is not on the opam repository yet: install it by pinning this

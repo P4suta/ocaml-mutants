@@ -159,20 +159,9 @@
  (action
   (run %{exe:workspace_snapshot_contract_tests.exe})))
 
-(rule
- (alias runtest)
- (deps
-  dogfood_tool_contract_tests.py
-  ../scripts/verify-workspace-manifest.py
-  ../scripts/verify-dogfood-run.py
-  ../schema/run-report-v1.schema.json)
- (action
-  (run
-   python
-   %{dep:dogfood_tool_contract_tests.py}
-   %{dep:../scripts/verify-workspace-manifest.py}
-   %{dep:../scripts/verify-dogfood-run.py}
-   %{dep:../schema/run-report-v1.schema.json})))
+; The Python gates live on @dogfood-fast, @dogfood-full, and
+; @schema-validation, never on @runtest: the opam with-test build runs
+; @runtest inside the opam-repository sandbox, which provides no Python.
 
 (rule
  (alias dogfood-fast)
@@ -283,7 +272,7 @@
    %{dep:fixtures/timeout/dune-project})))
 
 (rule
- (alias runtest)
+ (alias schema-validation)
  (deps
   validate_schemas.py
   ../schema/catalog-v1.schema.json

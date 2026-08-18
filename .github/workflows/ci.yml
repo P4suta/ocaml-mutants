@@ -112,8 +112,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Python drives the schema-validation test rules, which only run with
-      # the suite on Windows below.
+      # Python drives the @schema-validation and dogfood rules; @runtest is
+      # pure OCaml so the opam with-test path needs no Python.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         if: runner.os == 'Windows'
         with:
@@ -132,6 +132,9 @@ jobs:
       - name: Tests (Windows only until the POSIX store lands)
         if: runner.os == 'Windows'
         run: opam exec -- dune runtest
+      - name: Schema validation (Windows only until the POSIX store lands)
+        if: runner.os == 'Windows'
+        run: opam exec -- dune build @schema-validation
       - name: Dogfood contracts (Windows only until the POSIX store lands)
         if: runner.os == 'Windows'
         run: opam exec -- dune build @dogfood-fast
@@ -156,6 +159,7 @@ jobs:
       - run: opam install ocamlformat.0.28.1 -y
       - run: opam exec -- dune build @all @fmt @doc @install
       - run: opam exec -- dune runtest
+      - run: opam exec -- dune build @schema-validation
       - run: opam exec -- dune build @dogfood-fast
 
   dogfood-list:

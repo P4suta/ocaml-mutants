@@ -4,7 +4,12 @@
   3.13.7 and `jsonschema==4.26.0`, and run `python -m pip check`
 - [ ] `opam lint ocaml-mutants.opam`
 - [ ] `dune build @all`
-- [ ] `dune runtest`
+- [ ] `dune runtest` (pure OCaml; must pass without Python on PATH, matching
+  the opam-repository sandbox)
+- [ ] `dune build @schema-validation`
+- [ ] Verify `opam install --with-test .` inside a sandboxed Linux opam before
+  submission: the sandbox mounts `$HOME` read-only, so the e2e suites must pin
+  their store and snapshots to writable temporary directories
 - [ ] `dune build @fmt`
 - [ ] `dune build @doc`
 - [ ] Confirm the CI lint job (typos, taplo over every tracked TOML file,
@@ -70,6 +75,8 @@
 - [ ] Run `mise run corpus-check` and `mise run corpus-unit`, then run the full
   networked `mise run corpus` gate against every manifest-pinned revision
 - [ ] Review Mutaml comparison and third-party acknowledgements
-- [ ] Review `CHANGELOG.md` and `RELEASE_NOTES.md`
+- [ ] Review `CHANGELOG.md` and `RELEASE_NOTES.md`: cut the release section
+  from `Unreleased` with the release date, add the link references at the
+  bottom, and drop the pre-release framing from the release notes
 - [ ] Create and sign the `0.1.0` tag only after approval
 - [ ] Submit to opam-repository only after approval
