@@ -78,6 +78,17 @@ let match_balanced_full_ids =
     "993a44e2c0b48f91b01f805734e6cbd4d859b8220814dcb38ff09a55fbddcee5";
   ]
 
+(* The real CLI resolves its run store under the OS cache root. These E2E runs
+   must never write the developer's real store, and the opam-repository test
+   sandbox mounts $HOME read-only, so every CLI invocation is redirected into an
+   owned temporary cache root. The store materializes at most one new path
+   component, so the default root's parent is pre-created. *)
+let store_env =
+  let root = Filename.temp_dir ~perms:0o700 "ocaml-mutants-e2e-store-" ".tmp" in
+  Unix.mkdir (Filename.concat root "ocaml-mutants") 0o700;
+  at_exit (fun () -> ignore (Util.remove_tree root));
+  [ ((if Sys.win32 then "LOCALAPPDATA" else "XDG_CACHE_HOME"), Some root) ]
+
 let check_list ~cli fixture_project =
   let fixture = Filename.dirname fixture_project |> Unix.realpath in
   let before =
@@ -86,7 +97,7 @@ let check_list ~cli fixture_project =
     | Error message -> fail "cannot digest fixture before run: %s" message
   in
   let process =
-    Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:[]
+    Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:store_env
       [ cli; "list"; fixture; "--json"; "--no-color" ]
   in
   if not (Process_supervisor.succeeded process) then
@@ -186,7 +197,7 @@ let check_list ~cli fixture_project =
        no-ops: strong adds the fixture's if-branch mutants over balanced. *)
     let profile_ids profile =
       let process =
-        Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:[]
+        Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:store_env
           [ cli; "list"; fixture; "--profile"; profile; "--json"; "--no-color" ]
       in
       if not (Process_supervisor.succeeded process) then
@@ -311,7 +322,7 @@ let check_custom_command ~cli fixture_project =
     | Error message -> fail "cannot digest custom fixture: %s" message
   in
   let process =
-    Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:[]
+    Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:store_env
       [
         cli;
         "run";
@@ -337,7 +348,7 @@ let check_custom_command ~cli fixture_project =
   in
   if before <> after then fail "custom run changed the source fixture";
   let without_separator =
-    Process_supervisor.run ~timeout:30. ~cwd:fixture ~env:[]
+    Process_supervisor.run ~timeout:30. ~cwd:fixture ~env:store_env
       [ cli; "run"; "."; "dune"; "runtest" ]
   in
   (match without_separator.status with
@@ -346,7 +357,7 @@ let check_custom_command ~cli fixture_project =
       fail "run without -- accepted surplus argv (%s)"
         (Process_supervisor.status_string without_separator.status));
   let contradictory =
-    Process_supervisor.run ~timeout:30. ~cwd:fixture ~env:[]
+    Process_supervisor.run ~timeout:30. ~cwd:fixture ~env:store_env
       [ cli; "list"; "."; "--json"; "--quiet" ]
   in
   (match contradictory.status with
@@ -355,7 +366,7 @@ let check_custom_command ~cli fixture_project =
       fail "--json/--quiet contradiction was accepted (%s)"
         (Process_supervisor.status_string contradictory.status));
   let cache_help =
-    Process_supervisor.run ~timeout:30. ~cwd:fixture ~env:[]
+    Process_supervisor.run ~timeout:30. ~cwd:fixture ~env:store_env
       [ cli; "cache"; "--help" ]
   in
   if not (Process_supervisor.succeeded cache_help) then
@@ -373,7 +384,7 @@ let parse_json label process =
 let check_timeout ~cli fixture_project =
   let fixture = Filename.dirname fixture_project |> Unix.realpath in
   let catalog =
-    Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:[]
+    Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:store_env
       [ cli; "list"; "."; "--json"; "--no-color" ]
   in
   if not (Process_supervisor.succeeded catalog) then
@@ -390,7 +401,7 @@ let check_timeout ~cli fixture_project =
     | [] -> fail "timeout fixture produced no mutant to execute"
   in
   let process =
-    Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:[]
+    Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:store_env
       [
         cli; "run"; "."; "--json"; "--fresh"; "--jobs"; "1"; "--mutant"; mutant;
       ]
@@ -415,7 +426,7 @@ let check_timeout ~cli fixture_project =
 let check_match_run ~cli fixture_project =
   let fixture = Filename.dirname fixture_project |> Unix.realpath in
   let process =
-    Process_supervisor.run ~timeout:600. ~cwd:fixture ~env:[]
+    Process_supervisor.run ~timeout:600. ~cwd:fixture ~env:store_env
       [ cli; "run"; "."; "--json"; "--fresh"; "--jobs"; "1" ]
   in
   (match process.status with
@@ -441,7 +452,7 @@ let check_baseline_failure ~cli fixture_project =
   let fixture = Filename.dirname fixture_project |> Unix.realpath in
   let explicit_timeout_seconds = 17. in
   let process =
-    Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:[]
+    Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:store_env
       [
         cli;
         "run";
@@ -482,7 +493,7 @@ let check_dirty_git_workspace ~cli fixture_project =
         let root = Workspace_snapshot.root snapshot in
         let git arguments =
           let process =
-            Process_supervisor.run ~timeout:30. ~cwd:root ~env:[]
+            Process_supervisor.run ~timeout:30. ~cwd:root ~env:store_env
               ("git" :: arguments)
           in
           if not (Process_supervisor.succeeded process) then
@@ -535,7 +546,7 @@ let check_dirty_git_workspace ~cli fixture_project =
           | Error message -> fail "cannot digest dirty workspace: %s" message
         in
         let process =
-          Process_supervisor.run ~timeout:120. ~cwd:root ~env:[]
+          Process_supervisor.run ~timeout:120. ~cwd:root ~env:store_env
             [ cli; "list"; "."; "--json"; "--no-color" ]
         in
         if not (Process_supervisor.succeeded process) then
