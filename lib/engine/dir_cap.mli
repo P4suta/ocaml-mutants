@@ -405,9 +405,12 @@ module type S = sig
       by refusing write/delete sharing. POSIX proves a kernel descriptor
       binding, verified against the process file-descriptor namespace at
       capture, that [atomic_rename] can publish without re-resolving a source
-      name; it does not deny a same-effective-user writer. A backend that cannot
-      prove the publication authority must return [Unsupported]. The operation
-      never creates, replaces, or follows the named entry. *)
+      name; it does not deny a same-effective-user writer. Where the platform
+      lacks that namespace but provides an exclusive one-call rename, capture
+      instead proves the parent's owner-exclusive envelope and retains the
+      staged name as the publication binding. A backend that cannot prove either
+      publication authority must return [Unsupported]. The operation never
+      creates, replaces, or follows the named entry. *)
 
   val read_captured : file -> limit:int64 -> (captured_read, error) result
   (** Reads and stats the object represented by [file]. A namespace lookup must
@@ -485,11 +488,16 @@ module type S = sig
       destination directory's owner-exclusive envelope: it stages the descriptor
       under a fresh verified temporary name and commits with one [renameat2];
       the temporary window is open only to a same-effective-user process. After
-      either POSIX commit the staged source name is consumed only while it still
-      binds the published identity; a failed or skipped consumption is an
-      ordered advisory, is never a conditional-unlink implementation, and never
-      affects the committed destination. A POSIX backend without the
-      descriptor-binding primitive returns [Unsupported]. *)
+      either descriptor-binding commit the staged source name is consumed only
+      while it still binds the published identity; a failed or skipped
+      consumption is an ordered advisory, is never a conditional-unlink
+      implementation, and never affects the committed destination. A POSIX
+      backend without the descriptor binding but with an exclusive one-call
+      rename ([renameatx_np]) publishes both policies inside the destination's
+      owner-exclusive envelope from the retained staged name, verified against
+      the captured descriptor immediately before the one commit call that also
+      consumes it. A POSIX backend with neither primitive returns [Unsupported].
+  *)
 
   val unlink_if_identity :
     dir ->
@@ -669,9 +677,11 @@ module System : S
     the process file-descriptor namespace; [atomic_rename] commits [No_replace]
     with one indivisible non-replacing [linkat] from that binding and [Replace]
     through a fresh verified temporary name under the destination's
-    owner-exclusive envelope, as documented on [atomic_rename]. A POSIX build
-    without that binding, including one without a [/proc] file-descriptor
-    namespace, returns [Unsupported].
+    owner-exclusive envelope, as documented on [atomic_rename]. Without a
+    [/proc] file-descriptor namespace, capture proves the owner-exclusive
+    envelope instead and the commit is one exclusive [renameatx_np] call from
+    the verified retained staged name. A POSIX build with neither binding
+    returns [Unsupported].
 
     Root and child acquisition failures, and Windows probe-entry temporary
     handle failures, preserve the action as primary and append every terminal

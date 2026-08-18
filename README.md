@@ -14,13 +14,13 @@ Schema v2 projection are the public compatibility surfaces for 0.1. OCaml
 library modules are not installed.
 
 CI builds the tree on Windows, Linux, and macOS across OCaml 5.4 and 5.5,
-gates the directory-capability and dogfood contract suites on every OS
-(strictly, with no silent capability skip, on Windows and Linux), runs the
-complete store-backed test suites on Windows, and replays the Balanced
-self-catalog determinism gate on Linux. The CLI-driven e2e suites do not run
-on Linux/macOS yet because byte-exact preprocessor reverse-mapping is still
-Windows-only; the complete Balanced self-run and the pinned corpus gate are
-also still outstanding. This tree is therefore not production-ready yet.
+gates the directory-capability and dogfood contract suites strictly — with no
+silent capability skip — on every OS, runs the complete store-backed test
+suites on Windows, and replays the Balanced self-catalog determinism gate on
+Linux. The CLI-driven e2e suites do not run on Linux/macOS yet because
+byte-exact preprocessor reverse-mapping is still Windows-only; the complete
+Balanced self-run and the pinned corpus gate are also still outstanding. This
+tree is therefore not production-ready yet.
 
 The engine is deliberately OCaml-native: mutation discovery, rendering, Dune
 integration, execution, and safety are built around OCaml compiler evidence.

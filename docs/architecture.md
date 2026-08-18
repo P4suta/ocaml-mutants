@@ -84,9 +84,10 @@ exit policy, and interval-tree instrumentation.
   deletion, immutable no-replace report publication, and atomic latest-index
   replacement. Windows proves per-handle sharing exclusion; POSIX proves the
   owner-exclusive envelope (an effective-user-owned `0o700` parent verified at
-  capture time) with a documented same-effective-user residual window, and
-  macOS keeps publication and atomic replacement `Unsupported` without a
-  `/proc` file-descriptor namespace. Mutant outcome-cache I/O and GC/clean
+  capture time) with a documented same-effective-user residual window. Linux
+  publishes from the `/proc` descriptor binding; macOS publishes with the
+  exclusive `renameatx_np` commit from the verified retained staged name
+  inside the same envelope. Mutant outcome-cache I/O and GC/clean
   traversal and deletion remain path-based. Byte-exact preprocessor
   reverse-mapping in the e2e ppx fixture on POSIX, production recursive
   deletion authority with mount-boundary proof, and complete

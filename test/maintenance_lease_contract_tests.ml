@@ -765,6 +765,7 @@ let test_workspace_less_maintenance_uses_cwd_boundary () =
   let parent = Filename.temp_file "ocaml-mutants-maintenance-global-" ".tmp" in
   Sys.remove parent;
   create_directory parent;
+  let parent = Unix.realpath parent in
   Fun.protect
     ~finally:(fun () -> ignore (Engine.Util.remove_tree parent))
     (fun () ->

@@ -86,6 +86,15 @@ typedef struct dc_reparse_data_buffer {
 #define DC_HAVE_POSIX_FD_LINK_PUBLISH 1
 #endif
 
+/* Without a /proc descriptor binding, an exclusive one-call rename primitive
+   inside the owner-exclusive envelope carries publication: the retained
+   staged name is verified against the captured descriptor immediately before
+   the single commit call. */
+#if !defined(_WIN32) && !defined(DC_HAVE_POSIX_FD_LINK_PUBLISH) && \
+    defined(__APPLE__) && defined(RENAME_EXCL)
+#define DC_HAVE_POSIX_ENVELOPE_RENAME 1
+#endif
+
 /* Conditional captured deletion requires the owner-exclusive envelope proof
    plus the openat/fstatat/unlinkat family. */
 #if !defined(_WIN32) && defined(O_NOFOLLOW) && defined(O_CLOEXEC) && \
@@ -696,7 +705,8 @@ CAMLprim value ocaml_mutants_dircap_open_child(value parent_value,
     int kind, permissions;
     int64_t size, mtime_ns;
     (void)parent_stat;
-#ifndef DC_HAVE_POSIX_FD_LINK_PUBLISH
+#if !defined(DC_HAVE_POSIX_FD_LINK_PUBLISH) && \
+    !defined(DC_HAVE_POSIX_ENVELOPE_RENAME)
     if (mode == 3)
       CAMLreturn(dc_raw_operation_failure(dc_error(
           DC_POSIX, DC_UNSUPPORTED, "immutable-publish-handle-unavailable")));
@@ -705,6 +715,18 @@ CAMLprim value ocaml_mutants_dircap_open_child(value parent_value,
     if (mode == 4 || mode == 5)
       CAMLreturn(dc_raw_operation_failure(dc_error(
           DC_POSIX, DC_UNSUPPORTED, "captured-delete-handle-unavailable")));
+#endif
+#ifdef DC_HAVE_POSIX_ENVELOPE_RENAME
+    /* The envelope-rename publication binding resolves the retained staged
+       name below the captured parent, so capture requires the same
+       owner-exclusive envelope proof as delete capture. */
+    if (mode == 3) {
+      if (fstat(parent_os, &parent_stat) != 0)
+        CAMLreturn(dc_raw_operation_failure(dc_posix_error(errno)));
+      if (!dc_posix_owner_exclusive(&parent_stat))
+        CAMLreturn(dc_raw_operation_failure(dc_error(
+            DC_POSIX, DC_UNSUPPORTED, "owner-exclusive-parent-unproven")));
+    }
 #endif
 #ifdef DC_HAVE_POSIX_ENVELOPE_DELETE
     if (mode == 4 || mode == 5) {
@@ -4145,6 +4167,52 @@ CAMLprim value ocaml_mutants_dircap_atomic_rename(value source_value,
                         0) != 0) {
       if (errno != ENOENT) consumption_advisory = 1;
     }
+  }
+#elif defined(DC_HAVE_POSIX_ENVELOPE_RENAME)
+  {
+    struct stat parent_stat, source_stat, staged_stat;
+    char parent_identity[DC_IDENTITY_CAPACITY];
+    if (fstat(target_parent->os, &parent_stat) != 0)
+      CAMLreturn(dc_posix_error(errno));
+    if (!S_ISDIR(parent_stat.st_mode))
+      CAMLreturn(dc_error(DC_POSIX, DC_NOT_DIRECTORY,
+                          "publication-parent-is-not-directory"));
+    if (!dc_posix_identity(&parent_stat, parent_identity,
+                           sizeof(parent_identity)))
+      CAMLreturn(dc_posix_error(EOVERFLOW));
+    if (strlen(parent_identity) !=
+            caml_string_length(parent_identity_value) ||
+        memcmp(parent_identity, String_val(parent_identity_value),
+               caml_string_length(parent_identity_value)) != 0)
+      CAMLreturn(dc_error(DC_CONTRACT, DC_OTHER,
+                          "publication-parent-identity-changed"));
+    if (!dc_posix_owner_exclusive(&parent_stat))
+      CAMLreturn(dc_error(DC_POSIX, DC_UNSUPPORTED,
+                          "owner-exclusive-parent-unproven"));
+    if (fstat(source->os, &source_stat) != 0)
+      CAMLreturn(dc_posix_error(errno));
+    if (!S_ISREG(source_stat.st_mode))
+      CAMLreturn(dc_error(DC_POSIX, DC_NOT_REGULAR,
+                          "publication-source-is-not-regular"));
+    if (caml_string_length(source_leaf_value) == 0)
+      CAMLreturn(dc_error(DC_POSIX, DC_UNSUPPORTED,
+                          "stable-source-binding-for-rename-unavailable"));
+    /* The retained staged name is the source binding only while it still
+       resolves to the captured descriptor's inode; the window between this
+       check and the one-call commit is open only to a same-effective-user
+       process inside the proven envelope.  The commit itself consumes the
+       staged name. */
+    if (fstatat(target_parent->os, String_val(source_leaf_value),
+                &staged_stat, AT_SYMLINK_NOFOLLOW) != 0)
+      CAMLreturn(dc_posix_error(errno));
+    if (staged_stat.st_dev != source_stat.st_dev ||
+        staged_stat.st_ino != source_stat.st_ino)
+      CAMLreturn(dc_error(DC_CONTRACT, DC_OTHER,
+                          "publication-source-name-rebound"));
+    if (renameatx_np(target_parent->os, String_val(source_leaf_value),
+                     target_parent->os, String_val(name_value),
+                     replacement == 0 ? RENAME_EXCL : 0) != 0)
+      CAMLreturn(dc_posix_error(errno));
   }
 #else
   (void)name_value;
