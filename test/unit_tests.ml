@@ -184,9 +184,9 @@ let test_operator_registry_contract () =
       "float-sub-to-add@1|float-arithmetic|1|balanced";
       "float-mul-to-div@1|float-arithmetic|1|balanced";
       "float-div-to-mul@1|float-arithmetic|1|balanced";
-      "select-then-branch@1|if-branch|1|balanced";
-      "select-else-branch@1|if-branch|1|balanced";
-      "delete-left-sequence@1|sequence-deletion|1|balanced";
+      "select-then-branch@1|if-branch|1|strong";
+      "select-else-branch@1|if-branch|1|strong";
+      "delete-left-sequence@1|sequence-deletion|1|all";
       "return-unit@1|return-replacement|1|balanced";
       "return-false@1|return-replacement|1|balanced";
       "return-true@1|return-replacement|1|balanced";
@@ -195,6 +195,16 @@ let test_operator_registry_contract () =
       "return-empty-string@1|return-replacement|1|balanced";
       "return-empty-list@1|return-replacement|1|balanced";
       "return-none@1|return-replacement|1|balanced";
+      "match-arm-unit@1|match-arm|1|balanced";
+      "match-arm-false@1|match-arm|1|balanced";
+      "match-arm-true@1|match-arm|1|balanced";
+      "match-arm-zero@1|match-arm|1|balanced";
+      "match-arm-float-zero@1|match-arm|1|balanced";
+      "match-arm-empty-string@1|match-arm|1|balanced";
+      "match-arm-empty-list@1|match-arm|1|balanced";
+      "match-arm-none@1|match-arm|1|balanced";
+      "some-to-none@1|constructor-replacement|1|balanced";
+      "cons-to-nil@1|constructor-replacement|1|balanced";
     ]
   in
   Alcotest.(check (list string))
@@ -212,6 +222,8 @@ let test_operator_registry_contract () =
       "if-branch";
       "sequence-deletion";
       "return-replacement";
+      "match-arm";
+      "constructor-replacement";
     ]
     (List.map Core.Operator.Family.name Core.Operator.Family.all);
   Alcotest.(check (list string))
