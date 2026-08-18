@@ -486,148 +486,147 @@ let test_join_root_identity_contract () =
             | Error message ->
                 Alcotest.failf "POSIX root rename was refused: %s" message);
             create_directory cache;
-            let replacement_store =
-              get_ok (Engine.Run_store.create ~workspace ~directory:cache ())
-            in
-            match
-              Engine.Run_store.reserve replacement_store
-                ~started_at:allocator_started_at
-            with
-            | Ok replacement ->
-                ignore
-                  (Engine.Run_store.abandon_reservation replacement_store
-                     replacement);
-                Alcotest.fail
-                  "a valid marker on a different root identity was accepted"
+            (* The identity mismatch against the live root lease fails closed at
+               the earliest boundary that observes it: store creation when the
+               replacement root is adopted, otherwise reservation. *)
+            (match Engine.Run_store.create ~workspace ~directory:cache () with
             | Error error ->
                 Alcotest.(check string)
                   "fresh join fails on live root identity mismatch"
                   "workspace-violation"
-                  (Engine.Error.cause_name (Engine.Error.cause error));
-                check_marker_count cache 0)))
+                  (Engine.Error.cause_name (Engine.Error.cause error))
+            | Ok replacement_store -> (
+                match
+                  Engine.Run_store.reserve replacement_store
+                    ~started_at:allocator_started_at
+                with
+                | Ok replacement ->
+                    ignore
+                      (Engine.Run_store.abandon_reservation replacement_store
+                         replacement);
+                    Alcotest.fail
+                      "a valid marker on a different root identity was accepted"
+                | Error error ->
+                    Alcotest.(check string)
+                      "fresh join fails on live root identity mismatch"
+                      "workspace-violation"
+                      (Engine.Error.cause_name (Engine.Error.cause error))));
+            check_marker_count cache 0)))
 
 let test_native_acquisition_cleanup_retry_is_consumed () =
-  if Sys.win32 then
-    with_layout (fun ~parent ~cache ~workspace:_ ~store ->
-        Fun.protect ~finally:reset_native_internal_fault (fun () ->
-            inject_native_internal_fault native_lock_acquire_fault_site true
-              true;
-            let failure =
-              match
-                Engine.Run_store.reserve store ~started_at:allocator_started_at
-              with
-              | Error error -> error
-              | Ok reservation ->
-                  ignore
-                    (Engine.Run_store.abandon_reservation store reservation);
-                  Alcotest.fail
-                    "injected native lock acquisition unexpectedly succeeded"
-            in
-            Alcotest.(check (list string))
-              "action stays primary before internal cleanup failure"
-              [
-                "injected-lock-acquire-failure";
-                "injected-internal-close-failure";
-              ]
-              (native_error_codes failure);
-            reset_native_internal_fault ();
-            let moved_cache = Filename.concat parent "retry-closed-cache" in
-            (try
-               Sys.rename cache moved_cache;
-               Sys.rename moved_cache cache
-             with Sys_error message ->
-               Alcotest.failf
-                 "retry left the native no-delete-share handle live: %s" message);
-            let reservation = reserve store in
-            get_ok (Engine.Run_store.abandon_reservation store reservation)))
-
-let test_bootstrap_postcommit_failure_recovers_only_empty_root () =
-  if Sys.win32 then (
-    let parent = Filename.temp_file "ocaml-mutants-bootstrap-fault-" ".tmp" in
-    Sys.remove parent;
-    create_directory parent;
-    Fun.protect
-      ~finally:(fun () ->
-        reset_native_internal_fault ();
-        ignore (Engine.Util.remove_tree parent))
-      (fun () ->
-        let cache = Filename.concat parent "cache" in
-        let workspace = Filename.concat parent "workspace" in
-        create_directory workspace;
-        inject_native_internal_fault create_directory_after_commit_fault_site
-          true false;
-        (match Engine.Run_store.create ~workspace ~directory:cache () with
-        | Ok _ -> Alcotest.fail "post-commit root creation fault was hidden"
-        | Error error ->
-            Alcotest.(check bool)
-              "post-commit root evidence is lossless" true
-              (List.mem "injected-create-after-commit"
-                 (native_error_codes error)));
-        Alcotest.(check bool)
-          "post-commit root residual exists" true (Sys.is_directory cache);
-        reset_native_internal_fault ();
-        let store =
-          get_ok (Engine.Run_store.create ~workspace ~directory:cache ())
-        in
-        Alcotest.(check string)
-          "empty-root recovery installs exact ownership marker"
-          "owner=ocaml-mutants\nschema=2\n"
-          (read_file_or_fail (Filename.concat cache ".ocaml-mutants-cache-v2"));
-        let reservation = reserve store in
-        get_ok (Engine.Run_store.abandon_reservation store reservation)))
-
-let test_reservation_marker_postcommit_failure_is_audit_only () =
-  if Sys.win32 then
-    with_layout (fun ~parent:_ ~cache ~workspace:_ ~store ->
-        Fun.protect ~finally:reset_native_internal_fault (fun () ->
-            inject_native_internal_fault create_file_after_commit_fault_site
-              true false;
-            (match
-               Engine.Run_store.reserve store ~started_at:allocator_started_at
-             with
+  with_layout (fun ~parent ~cache ~workspace:_ ~store ->
+      Fun.protect ~finally:reset_native_internal_fault (fun () ->
+          inject_native_internal_fault native_lock_acquire_fault_site true true;
+          let failure =
+            match
+              Engine.Run_store.reserve store ~started_at:allocator_started_at
+            with
+            | Error error -> error
             | Ok reservation ->
                 ignore (Engine.Run_store.abandon_reservation store reservation);
-                Alcotest.fail "post-commit marker creation fault was hidden"
-            | Error error ->
-                Alcotest.(check bool)
-                  "post-commit marker evidence is lossless" true
-                  (List.mem "injected-create-file-after-commit"
-                     (native_error_codes error)));
-            let audit_only = reservation_markers cache in
-            Alcotest.(check int)
-              "uncaptured marker residual remains audit-only" 1
-              (List.length audit_only);
-            reset_native_internal_fault ();
-            let reservation = reserve store in
-            Alcotest.(check int)
-              "allocator skips the audit-only collision" 2
-              (List.length (reservation_markers cache));
-            get_ok (Engine.Run_store.abandon_reservation store reservation);
-            Alcotest.(check (list string))
-              "exact abandon preserves unrelated audit residual" audit_only
-              (reservation_markers cache)))
+                Alcotest.fail
+                  "injected native lock acquisition unexpectedly succeeded"
+          in
+          Alcotest.(check (list string))
+            "action stays primary before internal cleanup failure"
+            [
+              "injected-lock-acquire-failure"; "injected-internal-close-failure";
+            ]
+            (native_error_codes failure);
+          reset_native_internal_fault ();
+          let moved_cache = Filename.concat parent "retry-closed-cache" in
+          (try
+             Sys.rename cache moved_cache;
+             Sys.rename moved_cache cache
+           with Sys_error message ->
+             Alcotest.failf
+               "retry left the native no-delete-share handle live: %s" message);
+          let reservation = reserve store in
+          get_ok (Engine.Run_store.abandon_reservation store reservation)))
+
+let test_bootstrap_postcommit_failure_recovers_only_empty_root () =
+  let parent = Filename.temp_file "ocaml-mutants-bootstrap-fault-" ".tmp" in
+  Sys.remove parent;
+  create_directory parent;
+  Fun.protect
+    ~finally:(fun () ->
+      reset_native_internal_fault ();
+      ignore (Engine.Util.remove_tree parent))
+    (fun () ->
+      let cache = Filename.concat parent "cache" in
+      let workspace = Filename.concat parent "workspace" in
+      create_directory workspace;
+      inject_native_internal_fault create_directory_after_commit_fault_site true
+        false;
+      (match Engine.Run_store.create ~workspace ~directory:cache () with
+      | Ok _ -> Alcotest.fail "post-commit root creation fault was hidden"
+      | Error error ->
+          Alcotest.(check bool)
+            "post-commit root evidence is lossless" true
+            (List.mem "injected-create-after-commit" (native_error_codes error)));
+      Alcotest.(check bool)
+        "post-commit root residual exists" true (Sys.is_directory cache);
+      reset_native_internal_fault ();
+      let store =
+        get_ok (Engine.Run_store.create ~workspace ~directory:cache ())
+      in
+      Alcotest.(check string)
+        "empty-root recovery installs exact ownership marker"
+        "owner=ocaml-mutants\nschema=2\n"
+        (read_file_or_fail (Filename.concat cache ".ocaml-mutants-cache-v2"));
+      let reservation = reserve store in
+      get_ok (Engine.Run_store.abandon_reservation store reservation))
+
+let test_reservation_marker_postcommit_failure_is_audit_only () =
+  with_layout (fun ~parent:_ ~cache ~workspace:_ ~store ->
+      Fun.protect ~finally:reset_native_internal_fault (fun () ->
+          inject_native_internal_fault create_file_after_commit_fault_site true
+            false;
+          (match
+             Engine.Run_store.reserve store ~started_at:allocator_started_at
+           with
+          | Ok reservation ->
+              ignore (Engine.Run_store.abandon_reservation store reservation);
+              Alcotest.fail "post-commit marker creation fault was hidden"
+          | Error error ->
+              Alcotest.(check bool)
+                "post-commit marker evidence is lossless" true
+                (List.mem "injected-create-file-after-commit"
+                   (native_error_codes error)));
+          let audit_only = reservation_markers cache in
+          Alcotest.(check int)
+            "uncaptured marker residual remains audit-only" 1
+            (List.length audit_only);
+          reset_native_internal_fault ();
+          let reservation = reserve store in
+          Alcotest.(check int)
+            "allocator skips the audit-only collision" 2
+            (List.length (reservation_markers cache));
+          get_ok (Engine.Run_store.abandon_reservation store reservation);
+          Alcotest.(check (list string))
+            "exact abandon preserves unrelated audit residual" audit_only
+            (reservation_markers cache)))
 
 let test_exact_marker_delete_retry_precedes_lease_release () =
-  if Sys.win32 then
-    with_layout (fun ~parent:_ ~cache ~workspace:_ ~store ->
-        let reservation = reserve store in
-        let marker = marker_path cache in
-        Fun.protect ~finally:reset_native_internal_fault (fun () ->
-            inject_native_internal_fault delete_before_commit_fault_site true
-              false;
-            (match Engine.Run_store.abandon_reservation store reservation with
-            | Ok () -> Alcotest.fail "pre-commit marker delete fault was hidden"
-            | Error error ->
-                Alcotest.(check bool)
-                  "first exact delete failure remains primary" true
-                  (List.mem "injected-delete-before-commit"
-                     (native_error_codes error)));
-            Alcotest.(check bool)
-              "lease teardown retries and deletes the same captured marker"
-              false (Sys.file_exists marker);
-            reset_native_internal_fault ();
-            let next = reserve store in
-            get_ok (Engine.Run_store.abandon_reservation store next)))
+  with_layout (fun ~parent:_ ~cache ~workspace:_ ~store ->
+      let reservation = reserve store in
+      let marker = marker_path cache in
+      Fun.protect ~finally:reset_native_internal_fault (fun () ->
+          inject_native_internal_fault delete_before_commit_fault_site true
+            false;
+          (match Engine.Run_store.abandon_reservation store reservation with
+          | Ok () -> Alcotest.fail "pre-commit marker delete fault was hidden"
+          | Error error ->
+              Alcotest.(check bool)
+                "first exact delete failure remains primary" true
+                (List.mem "injected-delete-before-commit"
+                   (native_error_codes error)));
+          Alcotest.(check bool)
+            "lease teardown retries and deletes the same captured marker" false
+            (Sys.file_exists marker);
+          reset_native_internal_fault ();
+          let next = reserve store in
+          get_ok (Engine.Run_store.abandon_reservation store next)))
 
 let test_unique_reservations_and_report_id_match () =
   with_layout (fun ~parent:_ ~cache ~workspace:_ ~store ->
@@ -680,14 +679,18 @@ let test_stage_is_io_free_and_one_shot () =
           ignore (Engine.Run_store.abandon_reservation store reservation);
           raw_remove_noerr marker)
         (fun () ->
+          (* Windows delete/write sharing excludes the ambient writer; POSIX has
+             no mandatory exclusion, so the in-place rewrite succeeds and the
+             capability below still finalizes through the pinned inode. *)
           (match Engine.Util.write_file marker "foreign-owner\n" with
           | Error _ when Sys.win32 -> ()
           | Error message ->
               Alcotest.failf "live marker replacement failed unexpectedly: %s"
                 message
-          | Ok () ->
+          | Ok () when Sys.win32 ->
               Alcotest.fail
-                "live reservation marker did not exclude an ambient writer");
+                "live reservation marker did not exclude an ambient writer"
+          | Ok () -> ());
           let staged = get_ok (Engine.Run_store.stage_run store reservation) in
           check_error_cause "invariant-violation"
             (Engine.Run_store.stage_run store reservation);

@@ -967,7 +967,7 @@ module System = struct
 
   let exclusive_missing_leaf_separation (forbidden : path_probe)
       (candidate : path_probe) =
-    Sys.win32 && forbidden.missing = []
+    forbidden.missing = []
     && (match candidate.missing with
       | [ _ ] -> true
       | [] | _ :: _ :: _ -> false)
@@ -1148,15 +1148,6 @@ module System = struct
                               },
                               Already_present,
                               [] ))
-                  | [ name ] when not Sys.win32 ->
-                      Error
-                        ( [],
-                          failure_of_error
-                            (make_error ~operation:Materialize
-                               ~class_:Unsupported ~native_domain:Contract
-                               ~native_code:
-                                 "owner-private-directory-create-unavailable"
-                               ~component:(Native_name.encode name) ()) )
                   | [ name ] -> (
                       let component = Native_name.encode name in
                       match
