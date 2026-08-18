@@ -55,7 +55,7 @@
     },
     "summary": {
       "type": "object",
-      "required": ["kind", "total", "executed", "not_run", "killed", "survived", "timeout", "inconclusive", "error", "expected_survivors", "unexpected_survivors", "unfulfilled_expectations", "detected", "score"],
+      "required": ["kind", "total", "executed", "not_run", "killed", "survived", "timeout", "unconfirmed_timeouts", "inconclusive", "error", "expected_survivors", "unexpected_survivors", "unfulfilled_expectations", "detected", "score"],
       "properties": {
         "kind": { "enum": ["complete", "partial"] },
         "total": { "type": "integer", "minimum": 0 },
@@ -64,6 +64,7 @@
         "killed": { "type": "integer", "minimum": 0 },
         "survived": { "type": "integer", "minimum": 0 },
         "timeout": { "type": "integer", "minimum": 0 },
+        "unconfirmed_timeouts": { "type": "integer", "minimum": 0 },
         "inconclusive": { "type": "integer", "minimum": 0 },
         "error": { "type": "integer", "minimum": 0 },
         "expected_survivors": { "type": "integer", "minimum": 0 },

@@ -39,6 +39,8 @@ let result_display result =
       ("UNFULFILLED EXPECTATION", Failure)
   | _, Core.Outcome.Survived -> ("SURVIVED", Failure)
   | _, Core.Outcome.Killed -> ("KILLED", Success)
+  | _, Core.Outcome.Timeout when not result.timeout_confirmed ->
+      ("UNCONFIRMED TIMEOUT", Diagnostic)
   | _, Core.Outcome.Timeout -> ("TIMEOUT", Warning)
   | _, Core.Outcome.Inconclusive _ -> ("INCONCLUSIVE", Diagnostic)
   | _, Core.Outcome.Error _ -> ("ERROR", Diagnostic)
@@ -115,64 +117,79 @@ let print_run ?(color = false) formatter run =
       run.Run_store.results
   in
   List.iter (print_result ~color formatter) results;
-  let ( killed,
-        unexpected_survivors,
-        expected_survivors,
-        timeout,
-        inconclusive,
-        error ) =
+  let counts =
     List.fold_left
-      (fun ( killed,
-             unexpected_survivors,
-             expected_survivors,
-             timeout,
-             inconclusive,
-             error ) result ->
+      (fun (killed, unexpected, expected, confirmed, unconfirmed, inc, error)
+           result ->
         match (result.Run_store.outcome, result.expected_reason) with
         | Core.Outcome.Killed, _ ->
             ( killed + 1,
-              unexpected_survivors,
-              expected_survivors,
-              timeout,
-              inconclusive,
+              unexpected,
+              expected,
+              confirmed,
+              unconfirmed,
+              inc,
               error )
         | Core.Outcome.Survived, Some _ ->
             ( killed,
-              unexpected_survivors,
-              expected_survivors + 1,
-              timeout,
-              inconclusive,
+              unexpected,
+              expected + 1,
+              confirmed,
+              unconfirmed,
+              inc,
               error )
         | Core.Outcome.Survived, None ->
             ( killed,
-              unexpected_survivors + 1,
-              expected_survivors,
-              timeout,
-              inconclusive,
+              unexpected + 1,
+              expected,
+              confirmed,
+              unconfirmed,
+              inc,
+              error )
+        | Core.Outcome.Timeout, _ when result.timeout_confirmed ->
+            ( killed,
+              unexpected,
+              expected,
+              confirmed + 1,
+              unconfirmed,
+              inc,
               error )
         | Core.Outcome.Timeout, _ ->
             ( killed,
-              unexpected_survivors,
-              expected_survivors,
-              timeout + 1,
-              inconclusive,
+              unexpected,
+              expected,
+              confirmed,
+              unconfirmed + 1,
+              inc,
               error )
         | Core.Outcome.Inconclusive _, _ ->
             ( killed,
-              unexpected_survivors,
-              expected_survivors,
-              timeout,
-              inconclusive + 1,
+              unexpected,
+              expected,
+              confirmed,
+              unconfirmed,
+              inc + 1,
               error )
         | Core.Outcome.Error _, _ ->
             ( killed,
-              unexpected_survivors,
-              expected_survivors,
-              timeout,
-              inconclusive,
+              unexpected,
+              expected,
+              confirmed,
+              unconfirmed,
+              inc,
               error + 1 ))
-      (0, 0, 0, 0, 0, 0) results
+      (0, 0, 0, 0, 0, 0, 0) results
   in
+  let ( killed,
+        unexpected_survivors,
+        expected_survivors,
+        confirmed_timeout,
+        unconfirmed_timeout,
+        inconclusive,
+        error ) =
+    counts
+  in
+  let timeout = confirmed_timeout + unconfirmed_timeout in
   let not_run = Run_store.not_run run in
   let total = List.length results + List.length not_run in
   Format.fprintf formatter
@@ -185,13 +202,18 @@ let print_run ?(color = false) formatter run =
        (Printf.sprintf "%d unexpected survivor" unexpected_survivors))
     (colorize color Success
        (Printf.sprintf "%d expected survivor" expected_survivors))
-    (colorize color Warning (Printf.sprintf "%d timeout" timeout))
+    (colorize color Warning
+       (if unconfirmed_timeout = 0 then Printf.sprintf "%d timeout" timeout
+        else
+          Printf.sprintf "%d timeout (%d unconfirmed)" timeout
+            unconfirmed_timeout))
     (colorize color Diagnostic (Printf.sprintf "%d inconclusive" inconclusive))
     (colorize color Diagnostic (Printf.sprintf "%d error" error))
     (List.length not_run);
   (* Kills plus confirmed timeouts over unexpected survivors: the same counts
-     the exit decision uses, so 100% lines up with exit 0. *)
-  let detected = killed + timeout in
+     the exit decision uses, so 100% lines up with exit 0. Unconfirmed timeouts
+     appear only in interrupted runs and carry no detection signal. *)
+  let detected = killed + confirmed_timeout in
   let scoreable = detected + unexpected_survivors in
   (if scoreable = 0 then
      Format.fprintf formatter "Mutation score: n/a (no scoreable mutants)@."

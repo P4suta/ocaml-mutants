@@ -16,8 +16,11 @@ executed mutants; explicit `not_run` mutants; structured phase/cause failures;
 and skip counts with sorted, unique, concrete source examples.
 
 The summary carries a derived mutation score alongside its raw counters.
-`summary.detected` is `killed + timeout` (a recorded timeout is always
-serially confirmed). `summary.score` is
+`summary.detected` is `killed + timeout - unconfirmed_timeouts`: only kills
+and serially confirmed timeouts count as detection evidence. An unconfirmed
+timeout can exist only in an interrupted run, where cancellation skipped the
+serial confirmation retry; completed runs always report
+`unconfirmed_timeouts` as zero. `summary.score` is
 `100 × detected / (detected + unexpected_survivors)`, or `null` when that
 denominator is zero. Expected survivors, inconclusive results, errors, and
 not-run mutants are excluded from the denominator: the first is a declared

@@ -2290,6 +2290,7 @@ type summary = {
   killed : int;
   survived : int;
   timeout : int;
+  unconfirmed_timeouts : int;
   inconclusive : int;
   error : int;
   expected_survivors : int;
@@ -2314,6 +2315,10 @@ let summary (run : run) =
     count_outcome (fun outcome -> outcome = Core.Outcome.Survived)
   in
   let timeout = count_outcome (fun outcome -> outcome = Core.Outcome.Timeout) in
+  let unconfirmed_timeouts =
+    count_results (fun result ->
+        result.outcome = Core.Outcome.Timeout && not result.timeout_confirmed)
+  in
   let inconclusive =
     count_outcome (function Core.Outcome.Inconclusive _ -> true | _ -> false)
   in
@@ -2352,10 +2357,12 @@ let summary (run : run) =
       0 run.expectations
   in
   (* Detected mutants are kills plus confirmed timeouts; the score denominator
-     adds only unexpected survivors. Expected survivors, inconclusive results,
-     errors, and not-run mutants carry no detection signal, and the last three
-     already surface through exit code 2. *)
-  let detected = killed + timeout in
+     adds only unexpected survivors. Unconfirmed timeouts exist only in
+     interrupted runs, where the confirmation retry was cancelled, and carry no
+     detection signal. Expected survivors, inconclusive results, errors, and
+     not-run mutants stay out as well; the last three already surface through
+     exit code 2. *)
+  let detected = killed + timeout - unconfirmed_timeouts in
   let scoreable = detected + unexpected_survivors in
   let score =
     if scoreable = 0 then None
@@ -2372,6 +2379,7 @@ let summary (run : run) =
     killed;
     survived;
     timeout;
+    unconfirmed_timeouts;
     inconclusive;
     error;
     expected_survivors;
@@ -2392,6 +2400,7 @@ let summary_json run =
       ("killed", `Int summary.killed);
       ("survived", `Int summary.survived);
       ("timeout", `Int summary.timeout);
+      ("unconfirmed_timeouts", `Int summary.unconfirmed_timeouts);
       ("inconclusive", `Int summary.inconclusive);
       ("error", `Int summary.error);
       ("expected_survivors", `Int summary.expected_survivors);
@@ -2715,6 +2724,7 @@ let validate_summary encoded run =
       "killed";
       "survived";
       "timeout";
+      "unconfirmed_timeouts";
       "inconclusive";
       "error";
       "expected_survivors";

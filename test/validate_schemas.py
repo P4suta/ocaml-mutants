@@ -159,7 +159,9 @@ def main():
         report_validator.validate(report)
         summary = report["summary"]
         assert summary["total"] == summary["executed"] + summary["not_run"]
-        assert summary["detected"] == summary["killed"] + summary["timeout"]
+        # This fixture run completes, so every recorded timeout is confirmed.
+        assert summary["unconfirmed_timeouts"] == 0
+        assert summary["detected"] == summary["killed"] + summary["timeout"] - summary["unconfirmed_timeouts"]
         scoreable = summary["detected"] + summary["unexpected_survivors"]
         if scoreable == 0:
             assert summary["score"] is None
