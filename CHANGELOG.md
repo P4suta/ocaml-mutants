@@ -45,6 +45,13 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Changed
 
+- The opam metadata is generated from `dune-project`
+  (`generate_opam_files true`), ending the hand-maintained duplication that
+  had already let the two descriptions drift. The maintainer and author
+  fields carry a real contact address, `x-maintenance-intent` declares
+  `(latest)`, and the unused `ocaml-compiler-libs` dependency is dropped —
+  the libraries use the compiler-shipped `compiler-libs.common`, which is not
+  that opam package.
 - `dune runtest` is pure OCaml: the Python-driven schema-validation and
   dogfood-verifier rules moved off the `runtest` alias onto the new
   `@schema-validation` alias (and the existing `@dogfood-fast`/`@dogfood-full`
