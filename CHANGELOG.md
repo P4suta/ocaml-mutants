@@ -79,6 +79,20 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Added
 
+- The directory-capability store is native on Linux and macOS: the six
+  deliberately fail-closed POSIX primitives close. Directory creation commits
+  with `mkdirat(0700)` and verifies kind, exact mode, effective-uid ownership,
+  and same-device parentage; publication re-verifies a retained capture-time
+  component against the still-open source inode and commits with one native
+  no-replace rename (`renameat2` on Linux, `renameatx_np` on Darwin); captured
+  deletion is a verified-name `unlinkat` with post-commit link-count release
+  evidence. Windows-only sharing guarantees are now documented per-OS: POSIX
+  capabilities pin inodes, not names, and a same-effective-uid namespace
+  writer stays outside hard guarantees on both platforms. The full test
+  suite — store contracts, fixture E2E, CLI lifecycle, and interrupt included
+  — runs on Windows, Linux, and macOS in CI, and the byte-exact
+  preprocessor reverse-mapping bug that hid every `.pp.ml` mutant on Linux is
+  fixed along the way.
 - CI now enforces the pinned quality gates it previously only documented. A
   lint job runs typos, taplo, actionlint, and committed (via mise, so CI and
   local runs share one pinned toolchain); every matrix job runs
