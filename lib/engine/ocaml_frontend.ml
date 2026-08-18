@@ -183,7 +183,12 @@ let exact_preprocessed_source ~root ~cmt_file sourcefile =
       ^ ".ml"
     in
     let original = Filename.concat root original_relative in
-    let cmt = Core.Mutant.normalize_path cmt_file in
+    (* Only the separators are normalized here: [Core.Mutant.normalize_path]
+       drops empty components and would strip the leading slash from an absolute
+       POSIX cmt path, breaking the context-root derivation. *)
+    let cmt =
+      String.map (function '\\' -> '/' | character -> character) cmt_file
+    in
     match find_substring ~needle:"/default/" cmt with
     | None -> None
     | Some marker -> (
