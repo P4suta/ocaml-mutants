@@ -565,6 +565,80 @@ let choose value = if value then first else second
         fail "cache stats did not resolve the configured directory: %S"
           stats.stdout)
 
+(* `--` must reach the run term through the argv pre-split for the implicit
+   (default-command) invocation as well as the explicit `run` one, other
+   subcommands must keep `--` as an ordinary end-of-options token, and a bare
+   trailing `--` must stay a clean usage error. cmdliner's group dispatch reads
+   the first positional as a subcommand name, so the implicit form is
+   options-only: a positional workspace path requires the explicit `run`. *)
+let argv_split_contract cli executable =
+  let layout = create_layout () in
+  Fun.protect
+    ~finally:(fun () -> cleanup layout)
+    (fun () ->
+      let cache_root = Filename.concat layout.parent "cache-root" in
+      Unix.mkdir cache_root 0o700;
+      Unix.mkdir (Filename.concat cache_root "ocaml-mutants") 0o700;
+      let extra_env =
+        if Sys.win32 then [ ("LOCALAPPDATA", Some cache_root) ]
+        else [ ("XDG_CACHE_HOME", Some cache_root) ]
+      in
+      write
+        (Filename.concat layout.workspace "dune-project")
+        "(lang dune 3.21)\n(name argv_split_contract)\n";
+      write
+        (Filename.concat layout.workspace "dune")
+        {|(library
+ (name subject)
+ (modules subject))
+|};
+      write
+        (Filename.concat layout.workspace "subject.ml")
+        {|let first = true
+let second = false
+let choose value = if value then first else second
+|};
+      let _, selected_id, _ = catalog_ids ~extra_env ~cli layout in
+      write_config layout ~stage_flag:killing_stage_flag
+        ~stage_name:"kill-selected" executable;
+      let implicit =
+        run_cli ~extra_env ~cli layout
+          [
+            "--json";
+            "--no-color";
+            "--mutant";
+            selected_id;
+            "--";
+            executable;
+            killing_stage_flag;
+          ]
+      in
+      expect_exit "implicit run with a command tail" 0 implicit;
+      let report = parse_json "implicit run with a command tail" implicit in
+      check_completed_report "implicit run with a command tail" report;
+      let open Yojson.Safe.Util in
+      let command =
+        report |> member "test" |> member "command" |> to_list
+        |> List.map to_string
+      in
+      if
+        not (List.equal String.equal command [ executable; killing_stage_flag ])
+      then
+        fail "implicit run did not adopt the `--` command tail: %s"
+          (String.concat " " command);
+      let report_process =
+        run_cli ~extra_env ~cli layout
+          [ "report"; "--json"; "--no-color"; "--"; "latest" ]
+      in
+      expect_exit "report keeps `--` as end of options" 0 report_process;
+      expect_string "report `--` document type" "ocaml-mutants.run-report-v1"
+        (parse_json "report keeps `--` as end of options" report_process
+        |> member "document_type");
+      let bare = run_cli ~extra_env ~cli layout [ "--" ] in
+      expect_exit "bare `--` is a usage error" 2 bare;
+      if not (contains_substring ~needle:"must be followed" bare.stderr) then
+        fail "bare `--` did not produce the usage diagnostic: %S" bare.stderr)
+
 let () =
   if Engine.Process_supervisor.helper_requested Sys.argv then
     exit (Engine.Process_supervisor.run_helper Sys.argv)
@@ -583,7 +657,8 @@ let () =
       let cli = Unix.realpath Sys.argv.(1) in
       let executable = Unix.realpath Sys.executable_name in
       run_contract cli executable;
-      store_resolution_contract cli executable
+      store_resolution_contract cli executable;
+      argv_split_contract cli executable
     with Contract_failure message ->
       prerr_endline message;
       exit 1)

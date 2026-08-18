@@ -25,22 +25,30 @@ module Request = Application_request
 let ( let* ) value continuation = Result.bind value continuation
 let presplit_command = ref None
 
-let split_run_argv argv =
-  if Array.length argv < 2 || argv.(1) <> "run" then argv
+(* The `--` command tail applies to the explicit `run` subcommand and to the
+   implicit default-command invocation alike; every other subcommand keeps `--`
+   as an ordinary end-of-options token. cmdliner 2.x resolves subcommand names
+   exactly (prefix matching stays off unless CMDLINER_LEGACY_PREFIXES is set),
+   so exact membership below agrees with its dispatch. *)
+let split_run_argv ~subcommands argv =
+  if Array.length argv < 2 then argv
   else
-    let rec find index =
-      if index = Array.length argv then None
-      else if argv.(index) = "--" then Some index
-      else find (index + 1)
-    in
-    match find 2 with
-    | None -> argv
-    | Some index ->
-        presplit_command :=
-          Some
-            (Array.sub argv (index + 1) (Array.length argv - index - 1)
-            |> Array.to_list);
-        Array.sub argv 0 index
+    let explicit_run = String.equal argv.(1) "run" in
+    if (not explicit_run) && List.mem argv.(1) subcommands then argv
+    else
+      let rec find index =
+        if index = Array.length argv then None
+        else if argv.(index) = "--" then Some index
+        else find (index + 1)
+      in
+      match find (if explicit_run then 2 else 1) with
+      | None -> argv
+      | Some index ->
+          presplit_command :=
+            Some
+              (Array.sub argv (index + 1) (Array.length argv - index - 1)
+              |> Array.to_list);
+          Array.sub argv 0 index
 
 let print_error error =
   Format.eprintf "ocaml-mutants: %a@." Error.pp error;
@@ -535,6 +543,16 @@ let cache_command =
     (command_info "cache" ~doc:"Inspect or maintain the mutation cache.")
     [ stats; gc; clean ]
 
+let subcommands =
+  [
+    run_command;
+    list_command;
+    report_command;
+    doctor_command;
+    init_command;
+    cache_command;
+  ]
+
 let main_command =
   let doc = "type-aware mutation testing for Dune projects" in
   let man =
@@ -550,14 +568,7 @@ let main_command =
   in
   Cmd.group ~default:run_term
     (Cmd.info "ocaml-mutants" ~version:"0.1.0" ~doc ~man ~exits:run_exit_infos)
-    [
-      run_command;
-      list_command;
-      report_command;
-      doctor_command;
-      init_command;
-      cache_command;
-    ]
+    subcommands
 
 let () =
   if Process_supervisor.helper_requested Sys.argv then
@@ -568,7 +579,9 @@ let () =
       with Unix.Unix_error _ -> Sys.executable_name
     in
     Process_supervisor.configure_helper_executable executable;
-    let argv = split_run_argv Sys.argv in
+    let argv =
+      split_run_argv ~subcommands:(List.map Cmd.name subcommands) Sys.argv
+    in
     let code =
       match Cmd.eval_value ~argv main_command with
       | Ok (`Ok code) -> code

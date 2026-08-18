@@ -7,6 +7,14 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Fixed
 
+- `ocaml-mutants -- <command>` works: the `--` command tail now reaches the
+  implicit default `run` invocation instead of failing to parse, matching the
+  documented behavior. The implicit form is options-only — cmdliner's group
+  dispatch reads a first positional as a subcommand name, so a workspace path
+  still requires the explicit `run`. Other subcommands keep `--` as an
+  ordinary end-of-options token, and a bare trailing `--` stays a usage error.
+  The cmdliner lower bound rises to 2.0, whose exact-name subcommand dispatch
+  the argv pre-split mirrors.
 - The mutation score no longer counts unconfirmed timeouts as detected.
   `summary.detected` is now `killed + timeout - unconfirmed_timeouts`, with the
   new `unconfirmed_timeouts` counter recorded in the summary and surfaced in

@@ -81,10 +81,13 @@ ocaml-mutants
 ```
 
 The default test command is `dune runtest --force`. A custom command is passed
-as an argv vector after `--`; it is never evaluated as a shell string.
+as an argv vector after `--`, with or without the explicit `run` subcommand
+(the implicit form is options-only; a workspace path needs `run`); it is never
+evaluated as a shell string.
 
 ```console
 ocaml-mutants run . --jobs 4 --timeout 30 -- dune exec test/my_suite.exe -- --quick
+ocaml-mutants -- dune exec test/my_suite.exe
 ocaml-mutants list --operator comparison
 ocaml-mutants run --profile strong
 ocaml-mutants run --changed
