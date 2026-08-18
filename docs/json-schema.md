@@ -80,4 +80,4 @@ The compatibility document uses `schemaVersion: "2"`, not the native
 `document_type`/`schema_version` discriminator. Its exact status mapping,
 deterministic ordering, source validation, and local-only security boundary are
 documented in
-[Stryker report ecosystem compatibility](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/docs/stryker-compatibility.md).
+[Stryker report ecosystem compatibility](stryker-compatibility.md).

@@ -68,7 +68,8 @@ opam exec -- dune runtest
 
 ## Quick start
 
-Install the package into an opam switch, enter any Dune workspace, then run:
+This pre-release is not on the opam repository yet: install it by pinning this
+tree (`opam pin add ocaml-mutants .`). Then enter any Dune workspace and run:
 
 ```console
 ocaml-mutants
@@ -80,6 +81,7 @@ as an argv vector after `--`; it is never evaluated as a shell string.
 ```console
 ocaml-mutants run . --jobs 4 --timeout 30 -- dune exec test/my_suite.exe -- --quick
 ocaml-mutants list --operator comparison
+ocaml-mutants run --profile strong
 ocaml-mutants run --changed
 ocaml-mutants report latest --json
 ocaml-mutants run --stryker-json --threshold-high 80 --threshold-low 60 -- dune runtest --force
@@ -88,7 +90,7 @@ ocaml-mutants run --stryker-json --threshold-high 80 --threshold-low 60 -- dune 
 Stryker-compatible output is written only to standard output. Both score
 thresholds are explicit required inputs; ocaml-mutants neither uploads the
 report nor performs network publication. See the
-[compatibility boundary](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/docs/stryker-compatibility.md) for the exact, lossy
+[compatibility boundary](docs/stryker-compatibility.md) for the exact, lossy
 status mapping and validation rules.
 
 Use `ocaml-mutants init` to create `.ocaml-mutants.toml`. Configuration values
@@ -129,15 +131,15 @@ the score as a diagnostic and applies no threshold policy to it.
 
 ## Documentation
 
-- [Architecture](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/docs/architecture.md)
-- [Operators](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/docs/operators.md)
-- [Configuration](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/docs/configuration.md)
-- [JSON report schema](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/docs/json-schema.md)
-- [Stryker report ecosystem compatibility](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/docs/stryker-compatibility.md)
-- [Pinned local corpus gate](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/docs/pinned-corpus.md)
-- [Comparison with Mutaml](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/docs/comparison-with-mutaml.md)
-- [Contributing](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/CONTRIBUTING.md)
-- [0.1 release notes](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/RELEASE_NOTES.md)
+- [Architecture](docs/architecture.md)
+- [Operators](docs/operators.md)
+- [Configuration](docs/configuration.md)
+- [JSON report schema](docs/json-schema.md)
+- [Stryker report ecosystem compatibility](docs/stryker-compatibility.md)
+- [Pinned local corpus gate](docs/pinned-corpus.md)
+- [Comparison with Mutaml](docs/comparison-with-mutaml.md)
+- [Contributing](CONTRIBUTING.md)
+- [0.1 release notes](RELEASE_NOTES.md)
 
 ## License
 
