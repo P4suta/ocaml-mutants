@@ -1534,6 +1534,23 @@ let lexical_absolute path =
   in
   Fpath.(v absolute |> normalize |> to_string)
 
+(* Ambient store paths may traverse symlinked prefixes — macOS's /tmp and /var
+   are symlinks into /private — while the capability walk deliberately refuses
+   to follow any link. The ambient boundary therefore canonicalizes here: the
+   deepest existing ancestor resolves through the OS, and a missing suffix is
+   reattached verbatim for the walk's own missing-leaf handling. *)
+let canonical_absolute path =
+  let absolute = lexical_absolute path in
+  let rec resolve prefix suffix =
+    match Unix.realpath prefix with
+    | canonical -> List.fold_left Filename.concat canonical suffix
+    | exception Unix.Unix_error _ ->
+        let parent = Filename.dirname prefix in
+        if String.equal parent prefix then absolute
+        else resolve parent (Filename.basename prefix :: suffix)
+  in
+  resolve absolute []
+
 let is_within ~parent child =
   let parent = normalize_for_compare parent in
   let child = normalize_for_compare child in
@@ -1811,12 +1828,12 @@ let create_with_operations
     ?(next_reservation_sequence = next_process_reservation_sequence) operations
     ?workspace ?directory:configured () =
   let unresolved, relative = resolve_directory configured in
-  let requested = lexical_absolute unresolved in
-  let workspace = Option.map lexical_absolute workspace in
+  let requested = canonical_absolute unresolved in
+  let workspace = Option.map canonical_absolute workspace in
   let lock_boundary =
-    Option.value workspace ~default:(lexical_absolute (Sys.getcwd ()))
+    Option.value workspace ~default:(canonical_absolute (Sys.getcwd ()))
   in
-  let expected_cache_root = lexical_absolute (default_directory ()) in
+  let expected_cache_root = canonical_absolute (default_directory ()) in
   let escaped_cache_root =
     relative && not (is_within ~parent:expected_cache_root requested)
   in

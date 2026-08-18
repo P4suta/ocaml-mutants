@@ -86,7 +86,9 @@ let rec remove_tree path =
       Unix.unlink path
 
 let with_temp_directory action =
-  let root = Filename.temp_dir "ocaml-mutants-dir-cap-" "" in
+  (* Resolved: the OS temp prefix may itself be a symlink (macOS /var, /tmp),
+     which the capability walk refuses to follow. *)
+  let root = Filename.temp_dir "ocaml-mutants-dir-cap-" "" |> Unix.realpath in
   Fun.protect
     (fun () -> action root)
     ~finally:(fun () -> if Sys.file_exists root then remove_tree root)
@@ -195,7 +197,7 @@ let expect_cleanup_primary ~label ~cleanup_operation = function
 
 let existing_directory path =
   let forbidden_path =
-    Filename.temp_dir "ocaml-mutants-dir-cap-forbidden-" ""
+    Filename.temp_dir "ocaml-mutants-dir-cap-forbidden-" "" |> Unix.realpath
   in
   Fun.protect
     (fun () ->
