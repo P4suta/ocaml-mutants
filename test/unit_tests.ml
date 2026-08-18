@@ -623,7 +623,8 @@ let test_catalog_and_summary () =
     | Error error -> Alcotest.failf "%a" Core.Run_results.pp_error error
   in
   let summary = Core.Summary.of_results complete in
-  Alcotest.(check int) "survivor exit" 1 (Core.Exit_policy.of_summary summary)
+  Alcotest.(check int) "killed" 1 (Core.Summary.killed summary);
+  Alcotest.(check int) "survived" 1 (Core.Summary.survived summary)
 
 let test_catalog_distinguishes_collision_from_duplicate () =
   let first = mutant ~source:"true" ~start_byte:0 ~end_byte:4 "false" in
