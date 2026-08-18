@@ -507,6 +507,9 @@ module Process_witness = struct
   external image_of_pid : int -> string option
     = "ocaml_mutants_test_witness_image"
 
+  external image_of_handle : handle -> string option
+    = "ocaml_mutants_test_witness_handle_image"
+
   type proof = Handle of handle | Exited_at_open | Pid_polling
   type t = { pid : int; proof : proof }
 
@@ -527,9 +530,22 @@ module Process_witness = struct
         not (Engine.Process_supervisor.process_is_alive witness.pid)
 
   let describe witness =
-    match image_of_pid witness.pid with
-    | Some image -> Printf.sprintf "%d (%s)" witness.pid image
-    | None -> string_of_int witness.pid
+    let pid_owner =
+      match image_of_pid witness.pid with
+      | Some image -> Printf.sprintf "pid now owned by %s" image
+      | None -> "pid unresolvable"
+    in
+    match witness.proof with
+    | Handle handle -> (
+        match image_of_handle handle with
+        | Some image ->
+            Printf.sprintf "%d (witness image %s; %s)" witness.pid image
+              pid_owner
+        | None ->
+            Printf.sprintf "%d (witness image unavailable; %s)" witness.pid
+              pid_owner)
+    | Exited_at_open -> Printf.sprintf "%d (exited at witness open)" witness.pid
+    | Pid_polling -> Printf.sprintf "%d (pid polling; %s)" witness.pid pid_owner
 end
 
 let await_readiness layout listener connections owned =
