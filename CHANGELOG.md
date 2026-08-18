@@ -7,6 +7,14 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Fixed
 
+- The first cross-OS, cross-compiler CI run in the project's history found and
+  fixed four latent problems: OCaml 5.4 never compiled
+  (`Shape.Uid.Local_opaque_item` is 5.5-only; uid ownership now goes through
+  a version-selected `Shape_uid_compat` module), macOS never compiled
+  (`_POSIX_C_SOURCE` hides Darwin's `st_mtimespec`; the stubs opt back in via
+  `_DARWIN_C_SOURCE`), CRLF checkouts silently changed every mutant ID
+  (`.gitattributes` now forbids EOL conversion so checkouts are byte-exact by
+  contract), and the fmt gate needed the pinned ocamlformat installed in CI.
 - The `init` starter file no longer narrows `mutation.operators` to three
   families: it now leaves the key omitted (every family enabled, matching the
   built-in defaults) with a commented example that lists all nine names.

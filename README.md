@@ -13,10 +13,13 @@ This repository is the pre-release `0.1.0` working tree. The CLI, TOML v1, the n
 Schema v2 projection are the public compatibility surfaces for 0.1. OCaml
 library modules are not installed.
 
-The component, contract, and fixture gates are exercised locally on Windows.
-The complete Balanced self-run, pinned corpus, directory-capability migration,
-and cross-platform safety gates are still outstanding. Windows, Linux, and
-macOS are target platforms; this tree is therefore not production-ready yet.
+CI builds the tree on Windows, Linux, and macOS across OCaml 5.4 and 5.5,
+runs the complete store-backed test suites on Windows, and replays the
+Balanced self-catalog determinism gate on Linux. The POSIX
+`Run_store`/`Dir_cap` migration is in progress, so the store-backed suites do
+not run on Linux/macOS yet; the complete Balanced self-run and the pinned
+corpus gate are also still outstanding. This tree is therefore not
+production-ready yet.
 
 The engine is deliberately OCaml-native: mutation discovery, rendering, Dune
 integration, execution, and safety are built around OCaml compiler evidence.
