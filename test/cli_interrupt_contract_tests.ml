@@ -486,6 +486,52 @@ let create_listener () =
   in
   (descriptor, port)
 
+(* Exit proofs must not trust bare PIDs: Windows reuses them aggressively, so
+   polling [process_is_alive] on a PID learned earlier can observe an unrelated
+   newborn process forever. A witness pins the kernel identity of the
+   authenticated process — a real handle on Windows, a pidfd on Linux — opened
+   while the peer's readiness socket is still connected. Platforms without such
+   a mechanism fall back to PID polling. *)
+module Process_witness = struct
+  type handle
+
+  type opened =
+    | Witness of handle
+    | Unavailable
+    | Already_exited
+    | Open_failed of int
+
+  external open_witness : int -> opened = "ocaml_mutants_test_witness_open"
+  external witness_exited : handle -> bool = "ocaml_mutants_test_witness_exited"
+
+  external image_of_pid : int -> string option
+    = "ocaml_mutants_test_witness_image"
+
+  type proof = Handle of handle | Exited_at_open | Pid_polling
+  type t = { pid : int; proof : proof }
+
+  let create pid =
+    match open_witness pid with
+    | Witness handle -> { pid; proof = Handle handle }
+    | Already_exited -> { pid; proof = Exited_at_open }
+    | Unavailable -> { pid; proof = Pid_polling }
+    | Open_failed code ->
+        fail "cannot open a liveness witness for pid %d (native error %d)" pid
+          code
+
+  let exited witness =
+    match witness.proof with
+    | Handle handle -> witness_exited handle
+    | Exited_at_open -> true
+    | Pid_polling ->
+        not (Engine.Process_supervisor.process_is_alive witness.pid)
+
+  let describe witness =
+    match image_of_pid witness.pid with
+    | Some image -> Printf.sprintf "%d (%s)" witness.pid image
+    | None -> string_of_int witness.pid
+end
+
 let await_readiness layout listener connections owned =
   let deadline = Deadline.start policy.readiness_deadline in
   let seen = Hashtbl.create 3 in
@@ -534,7 +580,10 @@ let await_readiness layout listener connections owned =
         if not (String.equal actual expected) then
           fail "readiness marker for %s did not match its authenticated record"
             ready.role;
-        Hashtbl.add seen ready.role ready
+        (* The peer's socket is connected right now, so the witness binds the
+           authenticated PID to its live kernel identity before any reuse window
+           can open. *)
+        Hashtbl.add seen ready.role (ready, Process_witness.create ready.pid)
   done;
   [ "stage"; "child"; "grandchild" ]
   |> List.map (fun role -> Hashtbl.find seen role)
@@ -639,15 +688,19 @@ let wait_for_connection_shutdown connections =
   done;
   if !saw_windows_reset then Windows_connection_reset else Graceful_eof
 
-let wait_for_pids_to_exit pids =
+let wait_for_witnesses_to_exit witnesses =
   let deadline = Deadline.start policy.cleanup_deadline in
   let rec wait () =
-    let alive = List.filter Engine.Process_supervisor.process_is_alive pids in
+    let alive =
+      List.filter
+        (fun witness -> not (Process_witness.exited witness))
+        witnesses
+    in
     match alive with
     | [] -> ()
     | _ when Deadline.expired deadline ->
         fail "owned descendants remained alive: %s"
-          (String.concat "," (List.map string_of_int alive))
+          (String.concat "," (List.map Process_witness.describe alive))
     | _ ->
         let pause =
           min
@@ -659,9 +712,9 @@ let wait_for_pids_to_exit pids =
   in
   wait ()
 
-let prove_process_tree_stopped connections pids =
+let prove_process_tree_stopped connections witnesses =
   let disconnect = wait_for_connection_shutdown connections in
-  wait_for_pids_to_exit pids;
+  wait_for_witnesses_to_exit witnesses;
   (* In particular, [Windows_connection_reset] is not accepted as proof on its
      own. Exact PID liveness above, backed by both native Job owners, is the
      proof that the reset represented terminal peer shutdown. *)
@@ -829,7 +882,7 @@ let run_contract cli executable =
                   await_readiness layout listener connections owned
                 in
                 let snapshots =
-                  List.map (fun ready -> ready.snapshot) readiness
+                  List.map (fun (ready, _) -> ready.snapshot) readiness
                   |> List.sort_uniq String.compare
                 in
                 let snapshot =
@@ -858,11 +911,11 @@ let run_contract cli executable =
                     fail "interrupted CLI exceeded its shutdown deadline"
                 | Native_launcher.Wait_failed code ->
                     fail "interrupted CLI wait failed with native error %d" code);
-                let pids =
-                  Native_launcher.pid owned
-                  :: List.map (fun ready -> ready.pid) readiness
-                in
-                prove_process_tree_stopped connections pids;
+                (* The CLI's own exit was already proved handle-backed by
+                   [Native_launcher.wait] above; polling its bare PID here would
+                   reintroduce the reuse hazard the witnesses remove. *)
+                let witnesses = List.map snd readiness in
+                prove_process_tree_stopped connections witnesses;
                 if Sys.file_exists snapshot then
                   fail "owned workspace snapshot remained after interrupt: %s"
                     snapshot;
