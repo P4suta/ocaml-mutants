@@ -639,15 +639,21 @@ let wait_for_connection_shutdown connections =
   done;
   if !saw_windows_reset then Windows_connection_reset else Graceful_eof
 
-let wait_for_pids_to_exit pids =
+let wait_for_witnesses_to_exit witnesses =
   let deadline = Deadline.start policy.cleanup_deadline in
   let rec wait () =
-    let alive = List.filter Engine.Process_supervisor.process_is_alive pids in
+    let alive =
+      List.filter Engine.Process_supervisor.witness_is_alive witnesses
+    in
     match alive with
     | [] -> ()
     | _ when Deadline.expired deadline ->
         fail "owned descendants remained alive: %s"
-          (String.concat "," (List.map string_of_int alive))
+          (String.concat ","
+             (List.map
+                (fun witness ->
+                  string_of_int (Engine.Process_supervisor.witness_pid witness))
+                alive))
     | _ ->
         let pause =
           min
@@ -659,12 +665,15 @@ let wait_for_pids_to_exit pids =
   in
   wait ()
 
-let prove_process_tree_stopped connections pids =
+let prove_process_tree_stopped connections witnesses =
   let disconnect = wait_for_connection_shutdown connections in
-  wait_for_pids_to_exit pids;
+  Fun.protect
+    (fun () -> wait_for_witnesses_to_exit witnesses)
+    ~finally:(fun () ->
+      List.iter Engine.Process_supervisor.close_liveness_witness witnesses);
   (* In particular, [Windows_connection_reset] is not accepted as proof on its
-     own. Exact PID liveness above, backed by both native Job owners, is the
-     proof that the reset represented terminal peer shutdown. *)
+     own. Exact witnessed liveness above, backed by both native Job owners, is
+     the proof that the reset represented terminal peer shutdown. *)
   match disconnect with
   | Graceful_eof | Windows_connection_reset -> ()
 
@@ -839,6 +848,16 @@ let run_contract cli executable =
                       fail "process tree reported %d distinct snapshot roots"
                         (List.length snapshots)
                 in
+                (* Witnesses must be captured while the tree is provably alive
+                   (its readiness sockets are still connected), so that the
+                   later death proof answers for these exact processes rather
+                   than whatever a recycled PID names by then. *)
+                let witnesses =
+                  List.map
+                    (fun ready ->
+                      Engine.Process_supervisor.open_liveness_witness ready.pid)
+                    readiness
+                in
                 Native_launcher.send_interrupt owned;
                 (match Native_launcher.wait owned policy.shutdown_deadline with
                 | Native_launcher.Exited 130 -> ()
@@ -858,11 +877,11 @@ let run_contract cli executable =
                     fail "interrupted CLI exceeded its shutdown deadline"
                 | Native_launcher.Wait_failed code ->
                     fail "interrupted CLI wait failed with native error %d" code);
-                let pids =
-                  Native_launcher.pid owned
-                  :: List.map (fun ready -> ready.pid) readiness
-                in
-                prove_process_tree_stopped connections pids;
+                (* The CLI's own death was already proved exactly by
+                   [Native_launcher.wait] on its retained process handle;
+                   re-polling its PID could only report a recycled PID as a
+                   survivor. *)
+                prove_process_tree_stopped connections witnesses;
                 if Sys.file_exists snapshot then
                   fail "owned workspace snapshot remained after interrupt: %s"
                     snapshot;

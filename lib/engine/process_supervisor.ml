@@ -48,6 +48,33 @@ external job_close : nativeint -> unit = "ocaml_mutants_job_close"
 external windows_process_id : int -> int = "ocaml_mutants_windows_process_id"
 external process_is_alive : int -> bool = "ocaml_mutants_process_is_alive"
 
+external raw_open_witness : int -> nativeint
+  = "ocaml_mutants_process_open_witness"
+
+external raw_witness_is_alive : nativeint -> bool
+  = "ocaml_mutants_process_witness_is_alive"
+
+external raw_witness_close : nativeint -> unit
+  = "ocaml_mutants_process_witness_close"
+
+type liveness_witness = { witness_pid : int; witness_handle : nativeint }
+
+let open_liveness_witness pid =
+  {
+    witness_pid = pid;
+    witness_handle = (if Sys.win32 then raw_open_witness pid else 0n);
+  }
+
+let witness_pid witness = witness.witness_pid
+
+let witness_is_alive witness =
+  if Sys.win32 then
+    witness.witness_handle <> 0n && raw_witness_is_alive witness.witness_handle
+  else process_is_alive witness.witness_pid
+
+let close_liveness_witness witness =
+  if Sys.win32 then raw_witness_close witness.witness_handle
+
 external posix_spawn_process :
   string
   * string array

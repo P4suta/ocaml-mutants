@@ -448,3 +448,42 @@ CAMLprim value ocaml_mutants_job_close(value job_value) {
 #endif
   CAMLreturn(Val_unit);
 }
+
+/* A liveness witness pins one observed process while it is provably alive.
+   Windows recycles PIDs aggressively, so polling a bare PID can report an
+   unrelated newborn process as the observed one; a retained handle always
+   answers for the original process.  Waiting with a zero timeout also avoids
+   the STILL_ACTIVE exit-code ambiguity. */
+CAMLprim value ocaml_mutants_process_open_witness(value pid_value) {
+  CAMLparam1(pid_value);
+#ifdef _WIN32
+  HANDLE process =
+      OpenProcess(SYNCHRONIZE, FALSE, (DWORD)Int_val(pid_value));
+  CAMLreturn(caml_copy_nativeint((intnat)process));
+#else
+  (void)pid_value;
+  CAMLreturn(caml_copy_nativeint(0));
+#endif
+}
+
+CAMLprim value ocaml_mutants_process_witness_is_alive(value handle_value) {
+  CAMLparam1(handle_value);
+#ifdef _WIN32
+  HANDLE process = (HANDLE)Nativeint_val(handle_value);
+  BOOL running =
+      process != NULL && WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+  CAMLreturn(Val_bool(running));
+#else
+  (void)handle_value;
+  CAMLreturn(Val_false);
+#endif
+}
+
+CAMLprim value ocaml_mutants_process_witness_close(value handle_value) {
+  CAMLparam1(handle_value);
+#ifdef _WIN32
+  HANDLE process = (HANDLE)Nativeint_val(handle_value);
+  if (process != NULL) CloseHandle(process);
+#endif
+  CAMLreturn(Val_unit);
+}
