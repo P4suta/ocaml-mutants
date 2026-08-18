@@ -9,11 +9,50 @@ on:
 permissions:
   contents: read
 
+# A superseded run on the same ref only wastes runner minutes; completed
+# history on main stays intact.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
+  # Classifies the change so documentation-only pushes skip the OCaml jobs.
+  # Skipped required checks count as satisfied for the branch ruleset.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: classify
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ] \
+            && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ] \
+            && git rev-parse -q --verify '${{ github.event.before }}^{commit}' > /dev/null; then
+            range="${{ github.event.before }}..${{ github.sha }}"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          docs='^(docs/[^/]+\.md|[^/]+\.md|LICENSE-(MIT|APACHE)|\.github/(ISSUE_TEMPLATE/.*|PULL_REQUEST_TEMPLATE\.md|dependabot\.yml))$'
+          if git diff --name-only "$range" | grep -qvE "$docs"; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
@@ -25,23 +64,53 @@ jobs:
           taplo check mise.toml .ocaml-mutants.toml .typos.toml committed.toml
           scripts/corpus-v1.toml
       - run: actionlint
+      # head.sha, not the synthetic merge commit that checkout puts at HEAD.
       - name: committed (pull request range)
         if: github.event_name == 'pull_request'
-        run: committed ${{ github.event.pull_request.base.sha }}..HEAD
+        run: >-
+          committed ${{ github.event.pull_request.base.sha }}..${{
+          github.event.pull_request.head.sha }}
       - name: committed (pushed head)
         if: github.event_name != 'pull_request'
         run: committed HEAD~..HEAD
 
+  # Formatting, docs, install surface, and opam metadata are compiler-version
+  # independent, so they run once here (and once against the floor toolchain
+  # in dune-minimum) instead of in every matrix row.
+  static-checks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
+        with:
+          ocaml-compiler: "5.5.0"
+          dune-cache: true
+      - run: opam install . --deps-only --with-doc
+      - run: opam install ocamlformat.0.28.1 -y
+      - run: opam exec -- dune build @fmt
+      - run: opam exec -- dune build @doc
+      - run: opam exec -- dune build @install
+      - run: opam lint ocaml-mutants.opam
+
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         ocaml: ["5.4.1", "5.5.0"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Python drives the schema-validation test rules, which only run with
+      # the suite on Windows below.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: runner.os == 'Windows'
         with:
           python-version: "3.13"
       - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
@@ -49,8 +118,8 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml }}
           dune-cache: true
       - run: python -m pip install --requirement requirements-dev.txt
-      - run: opam install . --deps-only --with-test --with-doc
-      - run: opam install ocamlformat.0.28.1 -y
+        if: runner.os == 'Windows'
+      - run: opam install . --deps-only --with-test
       - run: opam exec -- dune build @all
       # The POSIX Run_store/Dir_cap substrate is a documented pre-release gate
       # (docs/architecture.md), so the store-backed suites can only pass on
@@ -61,16 +130,15 @@ jobs:
       - name: Dogfood contracts (Windows only until the POSIX store lands)
         if: runner.os == 'Windows'
         run: opam exec -- dune build @dogfood-fast
-      - run: opam exec -- dune build @fmt
-      - run: opam exec -- dune build @doc
-      - run: opam exec -- dune build @install
-      - run: opam lint ocaml-mutants.opam
 
   dune-minimum:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
       - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
@@ -86,10 +154,13 @@ jobs:
       - run: opam exec -- dune build @dogfood-fast
 
   dogfood-list:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
       - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
@@ -101,12 +172,12 @@ jobs:
         run: opam exec -- sh scripts/dogfood-list.sh
 
   package-install:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.13"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
         with:
           ocaml-compiler: "5.5.0"
