@@ -643,7 +643,9 @@ let wait_for_witnesses_to_exit witnesses =
   let deadline = Deadline.start policy.cleanup_deadline in
   let rec wait () =
     let alive =
-      List.filter Engine.Process_supervisor.witness_is_alive witnesses
+      List.filter
+        (fun (_, witness) -> Engine.Process_supervisor.witness_is_alive witness)
+        witnesses
     in
     match alive with
     | [] -> ()
@@ -651,8 +653,9 @@ let wait_for_witnesses_to_exit witnesses =
         fail "owned descendants remained alive: %s"
           (String.concat ","
              (List.map
-                (fun witness ->
-                  string_of_int (Engine.Process_supervisor.witness_pid witness))
+                (fun (role, witness) ->
+                  Printf.sprintf "%s=%d" role
+                    (Engine.Process_supervisor.witness_pid witness))
                 alive))
     | _ ->
         let pause =
@@ -670,7 +673,10 @@ let prove_process_tree_stopped connections witnesses =
   Fun.protect
     (fun () -> wait_for_witnesses_to_exit witnesses)
     ~finally:(fun () ->
-      List.iter Engine.Process_supervisor.close_liveness_witness witnesses);
+      List.iter
+        (fun (_, witness) ->
+          Engine.Process_supervisor.close_liveness_witness witness)
+        witnesses);
   (* In particular, [Windows_connection_reset] is not accepted as proof on its
      own. Exact witnessed liveness above, backed by both native Job owners, is
      the proof that the reset represented terminal peer shutdown. *)
@@ -855,7 +861,9 @@ let run_contract cli executable =
                 let witnesses =
                   List.map
                     (fun ready ->
-                      Engine.Process_supervisor.open_liveness_witness ready.pid)
+                      ( ready.role,
+                        Engine.Process_supervisor.open_liveness_witness
+                          ready.pid ))
                     readiness
                 in
                 Native_launcher.send_interrupt owned;
