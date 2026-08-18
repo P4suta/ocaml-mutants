@@ -77,17 +77,21 @@ exit policy, and interval-tree instrumentation.
   documented capability.
 - `Run_store` namespaces reports by canonical workspace identity and writes
   outcomes and reports to the OS cache directory. The shared
-  directory-capability contract and in-memory namespace-swap suite are backed on
-  Windows by single-leaf cache-root materialization, owner-private directory/file
-  creation, exact v2 ownership establishment, root-relative shared/exclusive
-  locks, captured reads, exact stage and reservation-marker deletion, immutable
-  no-replace report publication, and atomic latest-index replacement. Mutant
-  outcome-cache I/O and GC/clean traversal and deletion remain path-based. POSIX
-  missing-root and directory creation, publication and captured deletion,
-  production recursive deletion authority with mount-boundary proof, and
-  complete `Workspace_snapshot` migration are still pre-release gates.
-  Automatic outcome caching remains disabled until both that authority boundary
-  and the complete input proof are closed.
+  directory-capability contract and in-memory namespace-swap suite are backed
+  natively on every platform: single-leaf cache-root materialization,
+  owner-private directory/file creation, exact v2 ownership establishment,
+  root-relative shared/exclusive locks, captured reads, exact stage and
+  reservation-marker deletion, no-replace report publication, and atomic
+  latest-index replacement. Windows binds names through live handles and
+  sharing exclusion; POSIX pins inodes, retains capture-time components, and
+  re-verifies the name-to-inode binding at each commit (`mkdirat` creation,
+  `renameat2`/`renameatx_np` no-replace publication, verified-name `unlinkat`
+  deletion with link-count release evidence). Mutant outcome-cache I/O and
+  GC/clean traversal and deletion remain path-based, and production recursive
+  deletion authority with mount-boundary proof plus the complete
+  `Workspace_snapshot` migration are still pre-release gates. Automatic
+  outcome caching remains disabled until both that authority boundary and the
+  complete input proof are closed.
 
 ## Remaining requirements for automatic outcome caching
 
@@ -99,9 +103,9 @@ input-proof gaps, not key strength:
 
 1. Authority boundary. Mutant outcome I/O and the GC/clean traversal must move
    from path-based operations onto the owner-verified directory-capability
-   substrate, the six POSIX `Dir_cap.System` primitives must leave their
-   `Unsupported` stubs, and `Workspace_snapshot` cleanup must complete the same
-   migration. Until then a shared cache directory is not adversarially safe.
+   substrate (whose primitives are now native on Windows and POSIX both), and
+   `Workspace_snapshot` cleanup must complete the same migration. Until then a
+   shared cache directory is not adversarially safe.
 2. Complete input proof. The opam switch's dependency closure is not yet part
    of the key, so upgrading a library or PPX in place could produce a stale
    hit; and a failed executable-digest read currently degrades to a shared
