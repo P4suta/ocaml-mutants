@@ -445,11 +445,23 @@ let check_not_evaluated_expectation ~selected_id ~expected_id ~reason report =
       (report |> member "warnings" |> to_list)
   then fail "partial selection incorrectly emitted a stale-expectation warning"
 
+(* The default store must never be the developer's real OS cache root, and the
+   opam-repository test sandbox mounts $HOME read-only: redirect it below the
+   owned layout. The native store materializes at most one new path component,
+   so the default root's parent is pre-created. *)
+let redirected_store_env layout =
+  let cache_root = Filename.concat layout.parent "cache-root" in
+  Unix.mkdir cache_root 0o700;
+  Unix.mkdir (Filename.concat cache_root "ocaml-mutants") 0o700;
+  if Sys.win32 then [ ("LOCALAPPDATA", Some cache_root) ]
+  else [ ("XDG_CACHE_HOME", Some cache_root) ]
+
 let run_contract cli executable =
   let layout = create_layout () in
   Fun.protect
     ~finally:(fun () -> cleanup layout)
     (fun () ->
+      let extra_env = redirected_store_env layout in
       write
         (Filename.concat layout.workspace "dune-project")
         "(lang dune 3.21)\n(name cli_lifecycle_contract)\n";
@@ -466,11 +478,13 @@ let second = false
 let choose value = if value then first else second
 |};
       let before = source_digest layout in
-      let catalog, selected_id, expected_id = catalog_ids ~cli layout in
+      let catalog, selected_id, expected_id =
+        catalog_ids ~extra_env ~cli layout
+      in
 
       write_config layout ~stage_flag:timeout_stage_flag
         ~stage_name:"confirmed-timeout" executable;
-      run_json ~cli layout ~label:"confirmed timeout" ~exit_code:0
+      run_json ~extra_env ~cli layout ~label:"confirmed timeout" ~exit_code:0
         [ "--mutant"; selected_id ]
       |> check_confirmed_timeout ~mutant_id:selected_id;
 
@@ -481,7 +495,7 @@ let choose value = if value then first else second
       write_config layout ~stage_flag:killing_stage_flag
         ~stage_name:"kill-selected" ~expectation:(stale_id, stale_reason)
         executable;
-      run_json ~cli layout ~label:"stale expectation" ~exit_code:2 []
+      run_json ~extra_env ~cli layout ~label:"stale expectation" ~exit_code:2 []
       |> check_stale_expectation ~id:stale_id ~reason:stale_reason;
 
       let partial_reason =
@@ -491,7 +505,8 @@ let choose value = if value then first else second
         ~stage_name:"kill-selected"
         ~expectation:(expected_id, partial_reason)
         executable;
-      run_json ~cli layout ~label:"not-evaluated expectation" ~exit_code:0
+      run_json ~extra_env ~cli layout ~label:"not-evaluated expectation"
+        ~exit_code:0
         [ "--mutant"; selected_id ]
       |> check_not_evaluated_expectation ~selected_id ~expected_id
            ~reason:partial_reason;
@@ -501,8 +516,8 @@ let choose value = if value then first else second
          families. *)
       write_config layout ~stage_flag:killing_stage_flag
         ~stage_name:"kill-selected" ~operators:[ "comparison" ] executable;
-      run_json ~cli layout ~label:"narrowed-operator mutant selection"
-        ~exit_code:0
+      run_json ~extra_env ~cli layout
+        ~label:"narrowed-operator mutant selection" ~exit_code:0
         [ "--mutant"; selected_id ]
       |> check_completed_report "narrowed-operator mutant selection";
 
@@ -517,15 +532,7 @@ let store_resolution_contract cli executable =
   Fun.protect
     ~finally:(fun () -> cleanup layout)
     (fun () ->
-      let cache_root = Filename.concat layout.parent "cache-root" in
-      Unix.mkdir cache_root 0o700;
-      (* The native store materializes at most one new path component, so the
-         default cache root must already exist below the redirected OS root. *)
-      Unix.mkdir (Filename.concat cache_root "ocaml-mutants") 0o700;
-      let extra_env =
-        if Sys.win32 then [ ("LOCALAPPDATA", Some cache_root) ]
-        else [ ("XDG_CACHE_HOME", Some cache_root) ]
-      in
+      let extra_env = redirected_store_env layout in
       write
         (Filename.concat layout.workspace "dune-project")
         "(lang dune 3.21)\n(name store_resolution_contract)\n";
@@ -576,13 +583,7 @@ let argv_split_contract cli executable =
   Fun.protect
     ~finally:(fun () -> cleanup layout)
     (fun () ->
-      let cache_root = Filename.concat layout.parent "cache-root" in
-      Unix.mkdir cache_root 0o700;
-      Unix.mkdir (Filename.concat cache_root "ocaml-mutants") 0o700;
-      let extra_env =
-        if Sys.win32 then [ ("LOCALAPPDATA", Some cache_root) ]
-        else [ ("XDG_CACHE_HOME", Some cache_root) ]
-      in
+      let extra_env = redirected_store_env layout in
       write
         (Filename.concat layout.workspace "dune-project")
         "(lang dune 3.21)\n(name argv_split_contract)\n";
