@@ -678,7 +678,7 @@ let cache_key ~analysis ~selection ~config ~timeout =
       ("environment", canonical_environment ());
       ("toolchain", analysis.toolchain);
       ("executable.digest", executable_digest);
-      ("rule.abi", "4");
+      ("rule.abi", "5");
       ("instrumentation.abi", "3");
       ("cache.abi", "3");
     ]

@@ -21,6 +21,14 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Changed
 
+- The `balanced`, `strong`, and `all` profiles are now real, monotonically
+  inclusive tiers instead of aliases for one rule set: `balanced` (default)
+  drops `if-branch` and `sequence-deletion`, `strong` adds `if-branch`, and
+  `all` adds `sequence-deletion`. Mutant IDs are profile-independent and
+  unchanged; only the default catalog membership shrinks (the two noisiest
+  families move to the opt-in tiers). Explicit `--mutant` selection still
+  resolves against the complete catalog. `rule.abi` bumps 4 → 5 because rule
+  metadata changed, invalidating prior cache keys.
 - The migration-era shadow oracle is removed from the analysis path: the typed
   existential `Operator.Spec` registry is now the single production writer,
   ending the double generation and parity comparison of every candidate. The

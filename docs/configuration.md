@@ -44,8 +44,12 @@ directory = "team-cache"
 - `mutation.operators`: names from the operator reference. When omitted, every
   operator family is enabled; the `init` starter file leaves it omitted so a
   freshly initialized workspace matches the built-in defaults.
-- `mutation.profile`: `"balanced"`, `"strong"`, or `"all"`. The default and
-  `init` output both use `"balanced"`.
+- `mutation.profile`: `"balanced"`, `"strong"`, or `"all"`. The tiers are
+  monotonically inclusive: `balanced` (the default, also written by `init`)
+  runs every family except `if-branch` and `sequence-deletion`, `strong` adds
+  `if-branch`, and `all` adds `sequence-deletion`. The two upper tiers hold
+  the rules whose surviving mutants are most often noise (branch replacements
+  that duplicate condition edits, and effect deletion hitting logging code).
 - `mutation.expect`: repeated strict table rows containing a unique full
   64-character mutant `id` and a non-empty `reason`. Expected mutants still run
   on every invocation and never use the outcome cache.

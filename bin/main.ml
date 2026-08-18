@@ -96,7 +96,10 @@ let profile_option =
     value
     & opt (some string) None
     & info [ "profile" ] ~docv:"PROFILE"
-        ~doc:"Select balanced, strong, or all mutation rules.")
+        ~doc:
+          "Select the mutation tier: balanced (default; every family except \
+           if-branch and sequence-deletion), strong (adds if-branch), or all \
+           (adds sequence-deletion).")
 
 let mutant_options =
   Arg.(

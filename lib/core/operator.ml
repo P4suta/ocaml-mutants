@@ -672,9 +672,12 @@ module Spec = struct
   }
 
   let if_branch_definition ~target ~rule_name ~compatibility =
+    (* Strong tier: branch replacement mostly duplicates edits that
+       condition-negation and boolean-literal already produce at if sites, so
+       the survivors it adds are noise-prone for the default profile. *)
     let rule =
       make_rule ~family:Family.If_branch ~name:rule_name ~version:1
-        ~profile:Profile.Balanced
+        ~profile:Profile.Strong
     in
     let semantic_key =
       Replacement_plan.require_key ~context:(rule_stable_name rule)
@@ -756,9 +759,11 @@ module Spec = struct
   type sequence_evidence = Sequence_right of { plan : Replacement_plan.t }
 
   let sequence_deletion_definition =
+    (* All tier: deleting the left side of a sequence hits logging and
+       measurement effects, the classic source of equivalent mutants. *)
     let rule =
       make_rule ~family:Family.Sequence_deletion ~name:"delete-left-sequence"
-        ~version:1 ~profile:Profile.Balanced
+        ~version:1 ~profile:Profile.All
     in
     let compatibility = Any in
     let semantic_key =

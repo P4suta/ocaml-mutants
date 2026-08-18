@@ -17,7 +17,9 @@ let contains_substring ~needle value =
 
 (** Source-stable behavioral golden for [fixtures/basic]. Unlike the
     self-catalog hash, this changes only when the fixed fixture or mutation
-    semantics change. Review every update as an operator-contract change. *)
+    semantics change. Review every update as an operator-contract change. The
+    Balanced profile excludes the if-branch (Strong) and sequence-deletion (All)
+    families, so their fixture mutants are absent here by design. *)
 let basic_balanced_full_ids =
   [
     "0d4cefec4a095f4c547696732d9bed9e907fef71037ea6f2b607cf129eef90ae";
@@ -35,12 +37,8 @@ let basic_balanced_full_ids =
     "53eaa6c638c25a81d30e199df65978e4bf51b52e98f0a41db148cd4b48582855";
     "a2098d99d400f761d93b7fc105921a3207b9659e4558a67ee50c7d6e1c64ef5b";
     "f02c81da9bac4ae6afc9522011aa1d8705146c69e09c7baa00689ec07e622672";
-    "a241d4dde232d3e72a434738eacfb4cf3e8aadfac8fcbdee6fbdc21c08b12b1b";
-    "b6a07c3c55b3279d6830a53c33022a86976b40efebaa72b3fadb39aef542e782";
     "da27c21f97b127a82588baa192c48677e4a4b160872a8f7113a18eb7e53e6956";
     "bbad0c6b0a13ffe69ae195ca3aea0c87398d77946ccf00ea02daa7c17adea465";
-    "a071a9bf143169a642c173571f3bf2e6a69d713dfdb7b8d0b14136bb1a20f0d3";
-    "271b1e5697913022e7152b4fe8648fbd3eb837a321a0d79377d37885e500fa12";
     "55436579202259115bb654c79879d92487da34d51e42f17e5fce0648fd333e73";
     "debec7e1982f365a7ea4a1365e1fbc59712ffe8099115d46da1845feeb5abfec";
     "d3db5a5d2272b9532a1c277ef85176dbada9efb97a1276052083dbc182a2e553";
@@ -118,6 +116,38 @@ let check_list ~cli fixture_project =
       fail
         "basic fixture Balanced catalog changed; review this as an explicit \
          operator-contract change";
+    (* The tiers must stay monotonically inclusive and must not regress to
+       no-ops: strong adds the fixture's if-branch mutants over balanced. *)
+    let profile_ids profile =
+      let process =
+        Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:[]
+          [ cli; "list"; fixture; "--profile"; profile; "--json"; "--no-color" ]
+      in
+      if not (Process_supervisor.succeeded process) then
+        fail "profile %s list E2E failed (%s):\n%s%s" profile
+          (Process_supervisor.status_string process.status)
+          process.stdout process.stderr;
+      let json =
+        try Yojson.Safe.from_string process.stdout
+        with Yojson.Json_error message ->
+          fail "invalid %s profile list JSON: %s\n%s" profile message
+            process.stdout
+      in
+      Yojson.Safe.Util.(json |> member "mutants" |> to_list)
+      |> List.map (fun mutant ->
+          Yojson.Safe.Util.(mutant |> member "full_id" |> to_string))
+    in
+    let strong_ids = profile_ids "strong" in
+    let all_ids = profile_ids "all" in
+    let subset smaller larger =
+      List.for_all (fun id -> List.mem id larger) smaller
+    in
+    if not (subset full_ids strong_ids) then
+      fail "strong profile lost mutants from the balanced catalog";
+    if not (subset strong_ids all_ids) then
+      fail "all profile lost mutants from the strong catalog";
+    if List.length strong_ids <= List.length full_ids then
+      fail "strong profile added no mutants over balanced";
     let rules =
       List.map
         (fun mutant -> Yojson.Safe.Util.(mutant |> member "rule" |> to_string))

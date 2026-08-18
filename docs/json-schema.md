@@ -9,8 +9,9 @@ lossy report projection. Consumers of a native document must check both
 Produced by `run --json` and `report --json`. The normative schema is
 `run-report-v1.schema.json`. It records completed, interrupted, and failed runs;
 start and finish timestamps; workspace, toolchain, selection, test, and cache
-metadata; the selected `balanced`, `strong`, or `all` mutation profile as a
-field independent of the selection description; a complete or partial summary;
+metadata; the selected `balanced`, `strong`, or `all` mutation profile (three
+monotonically inclusive rule tiers) as a field independent of the selection
+description; a complete or partial summary;
 executed mutants; explicit `not_run` mutants; structured phase/cause failures;
 and skip counts with sorted, unique, concrete source examples.
 

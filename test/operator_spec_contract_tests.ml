@@ -274,6 +274,43 @@ let test_every_registered_rule_has_one_definition () =
     "the Spec registry is the ordered production registry" registered_names
     definition_names
 
+(* The complete family-to-profile tier map. A change here is an explicit
+   operator-contract change: it moves rules in or out of the default Balanced
+   catalog. *)
+let test_family_profile_tiers () =
+  let expected_profile = function
+    | Core.Operator.If_branch -> Core.Operator.Profile.Strong
+    | Core.Operator.Sequence_deletion -> Core.Operator.Profile.All
+    | Core.Operator.Boolean_literal | Core.Operator.Condition_negation
+    | Core.Operator.Boolean_connective | Core.Operator.Comparison
+    | Core.Operator.Integer_arithmetic | Core.Operator.Float_arithmetic
+    | Core.Operator.Return_replacement ->
+        Core.Operator.Profile.Balanced
+  in
+  List.iter
+    (fun rule ->
+      Alcotest.(check string)
+        (Printf.sprintf "%s profile tier" (Core.Operator.Rule.stable_name rule))
+        (Core.Operator.Profile.name
+           (expected_profile (Core.Operator.Rule.family rule)))
+        (Core.Operator.Profile.name (Core.Operator.Rule.profile rule)))
+    Core.Operator.Rule.all;
+  Alcotest.(check bool)
+    "balanced admits only balanced rules" true
+    (List.for_all
+       (fun rule ->
+         Core.Operator.Profile.includes Core.Operator.Profile.Balanced
+           (Core.Operator.Rule.profile rule)
+         = (Core.Operator.Rule.profile rule = Core.Operator.Profile.Balanced))
+       Core.Operator.Rule.all);
+  Alcotest.(check bool)
+    "all admits every rule" true
+    (List.for_all
+       (fun rule ->
+         Core.Operator.Profile.includes Core.Operator.Profile.All
+           (Core.Operator.Rule.profile rule))
+       Core.Operator.Rule.all)
+
 let () =
   Alcotest.run "operator-spec-contract"
     [
@@ -283,6 +320,8 @@ let () =
             test_packed_registry_contract;
           Alcotest.test_case "every rule has exactly one definition" `Quick
             test_every_registered_rule_has_one_definition;
+          Alcotest.test_case "family profile tiers" `Quick
+            test_family_profile_tiers;
           Alcotest.test_case "checked replacement-plan invariants" `Quick
             test_checked_replacement_plan_invariants;
           Alcotest.test_case "source proof and boundaries" `Quick
