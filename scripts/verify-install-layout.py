@@ -41,6 +41,9 @@ def expected_files(executable: PurePosixPath) -> set[PurePosixPath]:
         PurePosixPath(f"doc/{PACKAGE}/LICENSE-APACHE"),
         PurePosixPath(f"doc/{PACKAGE}/LICENSE-MIT"),
         PurePosixPath(f"doc/{PACKAGE}/README.md"),
+        # Emitted by dune for generate_opam_files-managed packages: the odoc 3
+        # documentation configuration. Metadata, not an OCaml library surface.
+        PurePosixPath(f"doc/{PACKAGE}/odoc-config.sexp"),
         PurePosixPath(f"share/{PACKAGE}/catalog-v1.schema.json"),
         PurePosixPath(f"share/{PACKAGE}/json-schema.md"),
         PurePosixPath(
