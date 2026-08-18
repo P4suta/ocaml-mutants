@@ -295,6 +295,17 @@ static struct custom_operations interrupt_witness_operations = {
     .compare_ext = custom_compare_ext_default,
     .fixed_length = custom_fixed_length_default};
 
+/* The kernel's own answer, bypassing any runtime-cached notion of the
+   process id: the readiness protocol authenticates this exact value. */
+CAMLprim value ocaml_mutants_test_current_pid(value unit) {
+  CAMLparam1(unit);
+#ifdef _WIN32
+  CAMLreturn(Val_int((int)GetCurrentProcessId()));
+#else
+  CAMLreturn(Val_int((int)getpid()));
+#endif
+}
+
 CAMLprim value ocaml_mutants_test_witness_open(value pid_value) {
   CAMLparam1(pid_value);
   CAMLlocal1(witness_value);

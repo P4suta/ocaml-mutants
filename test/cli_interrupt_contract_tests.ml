@@ -358,8 +358,10 @@ let marker_contents ~nonce ~role ~pid ~cwd =
     "owner=cli-interrupt-contract\nnonce=%s\nrole=%s\npid=%d\ncwd=%s\n" nonce
     role pid (hex_encode cwd)
 
+external kernel_pid : unit -> int = "ocaml_mutants_test_current_pid"
+
 let notify_and_block ~host ~port ~nonce ~control ~role =
-  let pid = Unix.getpid () in
+  let pid = kernel_pid () in
   let cwd = Unix.realpath (Sys.getcwd ()) in
   let marker = Filename.concat control (role ^ ".ready") in
   write marker (marker_contents ~nonce ~role ~pid ~cwd);
@@ -513,9 +515,27 @@ module Process_witness = struct
   type proof = Handle of handle | Exited_at_open | Pid_polling
   type t = { pid : int; proof : proof }
 
-  let create pid =
+  let create ~expected_image pid =
     match open_witness pid with
-    | Witness handle -> { pid; proof = Handle handle }
+    | Witness handle ->
+        (* All three descendant roles are instances of this test executable; any
+           other image behind the authenticated PID means the PID was already
+           stale or recycled when the witness opened. Failing here, while the
+           peer's socket is still connected, names the corruption precisely
+           instead of an ambiguous cleanup-deadline expiry later. *)
+        (match image_of_handle handle with
+        | Some image
+          when not
+                 (String.equal
+                    (String.lowercase_ascii (Filename.basename image))
+                    (String.lowercase_ascii (Filename.basename expected_image)))
+          ->
+            fail
+              "witness for authenticated pid %d opened %s instead of the \
+               descendant image %s"
+              pid image expected_image
+        | Some _ | None -> ());
+        { pid; proof = Handle handle }
     | Already_exited -> { pid; proof = Exited_at_open }
     | Unavailable -> { pid; proof = Pid_polling }
     | Open_failed code ->
@@ -599,7 +619,11 @@ let await_readiness layout listener connections owned =
         (* The peer's socket is connected right now, so the witness binds the
            authenticated PID to its live kernel identity before any reuse window
            can open. *)
-        Hashtbl.add seen ready.role (ready, Process_witness.create ready.pid)
+        Hashtbl.add seen ready.role
+          ( ready,
+            Process_witness.create
+              ~expected_image:(Unix.realpath Sys.executable_name)
+              ready.pid )
   done;
   [ "stage"; "child"; "grandchild" ]
   |> List.map (fun role -> Hashtbl.find seen role)
