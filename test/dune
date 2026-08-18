@@ -43,6 +43,15 @@
   (run %{exe:config_contract_tests.exe})))
 
 (test
+ (name glob_contract_tests)
+ (libraries ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (action
+  (run %{exe:glob_contract_tests.exe})))
+
+(test
  (name process_contract_tests)
  (libraries ocaml_mutants_engine alcotest threads))
 
