@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+# Retry transient opam source downloads instead of failing the job.
+env:
+  OPAMRETRIES: "3"
+
 jobs:
   gates:
     # Windows runner: the store-backed test suites only pass on Windows until

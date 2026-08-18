@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+# Retry transient opam source downloads instead of failing the job.
+env:
+  OPAMRETRIES: "3"
+
 # A superseded run on the same ref only wastes runner minutes; completed
 # history on main stays intact.
 concurrency:
