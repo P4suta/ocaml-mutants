@@ -5,6 +5,14 @@ for its CLI, TOML schema, and JSON schema.
 
 ## [Unreleased]
 
+### Fixed
+
+- `report` and `cache stats|gc|clean` now load the workspace configuration and
+  resolve the same store as `run`, so a configured `cache.directory` applies to
+  every subcommand. Both accept `--path PATH` (default `.`) to name the
+  workspace. As a consequence, a malformed `.ocaml-mutants.toml` is now a usage
+  error for these commands instead of being silently ignored.
+
 ### Added
 
 - Type-aware mutation discovery from Dune-produced Typedtrees.

@@ -68,7 +68,9 @@ directory = "team-cache"
 - `cache.directory`: optional cache directory. Relative paths resolve from the
   OS cache root, never from the source workspace. Existing directories require
   the ocaml-mutants ownership marker; workspace paths, ancestors, and symlink
-  escapes are rejected.
+  escapes are rejected. Every subcommand resolves the same configured store:
+  `report` and the `cache` maintenance commands read this key too, and accept
+  `--path PATH` (default `.`) to name the workspace that owns it.
 
 CLI options override TOML. Repeating `--include`, `--exclude`, or `--operator`
 replaces the corresponding TOML array. `--profile` overrides the profile, and

@@ -80,10 +80,10 @@ let source_digest layout =
 
 let cli_deadline_seconds = 180.
 
-let run_cli ~cli layout arguments =
+let run_cli ?(extra_env = []) ~cli layout arguments =
   Engine.Process_supervisor.run ~timeout:cli_deadline_seconds
     ~cwd:layout.workspace
-    ~env:[ ("DUNE_CACHE", Some "disabled") ]
+    ~env:(("DUNE_CACHE", Some "disabled") :: extra_env)
     (cli :: arguments)
 
 let expect_exit label expected process =
@@ -182,9 +182,10 @@ let run_killing_stage () =
       Printf.eprintf "kill-contract-stderr:%s\n%!" mutant;
       exit 23
 
-let catalog_ids ~cli layout =
+let catalog_ids ?extra_env ~cli layout =
   let process =
-    run_cli ~cli layout [ "list"; layout.workspace; "--json"; "--no-color" ]
+    run_cli ?extra_env ~cli layout
+      [ "list"; layout.workspace; "--json"; "--no-color" ]
   in
   expect_exit "catalog discovery" 0 process;
   let open Yojson.Safe.Util in
@@ -226,7 +227,13 @@ reason = %S
 
 |} id reason
 
-let write_config layout ~stage_flag ~stage_name ?expectation executable =
+let write_config layout ~stage_flag ~stage_name ?expectation ?cache_directory
+    executable =
+  let cache_directory_line =
+    match cache_directory with
+    | None -> ""
+    | Some directory -> Printf.sprintf "directory = %S\n" directory
+  in
   let config =
     Printf.sprintf
       {|version = 1
@@ -249,15 +256,16 @@ jobs = 1
 
 [cache]
 mode = "off"
-|}
+%s|}
       (expectation_block expectation)
       mutant_timeout_seconds stage_name executable stage_flag
+      cache_directory_line
   in
   write (Filename.concat layout.workspace ".ocaml-mutants.toml") config
 
-let run_json ~cli layout arguments ~label ~exit_code =
+let run_json ?extra_env ~cli layout arguments ~label ~exit_code =
   let process =
-    run_cli ~cli layout
+    run_cli ?extra_env ~cli layout
       ("run" :: layout.workspace :: "--json" :: "--no-color" :: arguments)
   in
   expect_exit label exit_code process;
@@ -484,6 +492,61 @@ let choose value = if value then first else second
       if not (String.equal before after) then
         fail "real CLI lifecycle runs changed the source workspace")
 
+(* The run, report, and cache subcommands must resolve the same store: the
+   configured [cache.directory] applies to every command, not only [run]. *)
+let store_resolution_contract cli executable =
+  let layout = create_layout () in
+  Fun.protect
+    ~finally:(fun () -> cleanup layout)
+    (fun () ->
+      let cache_root = Filename.concat layout.parent "cache-root" in
+      Unix.mkdir cache_root 0o700;
+      (* The native store materializes at most one new path component, so the
+         default cache root must already exist below the redirected OS root. *)
+      Unix.mkdir (Filename.concat cache_root "ocaml-mutants") 0o700;
+      let extra_env =
+        if Sys.win32 then [ ("LOCALAPPDATA", Some cache_root) ]
+        else [ ("XDG_CACHE_HOME", Some cache_root) ]
+      in
+      write
+        (Filename.concat layout.workspace "dune-project")
+        "(lang dune 3.21)\n(name store_resolution_contract)\n";
+      write
+        (Filename.concat layout.workspace "dune")
+        {|(library
+ (name subject)
+ (modules subject))
+|};
+      write
+        (Filename.concat layout.workspace "subject.ml")
+        {|let first = true
+let second = false
+let choose value = if value then first else second
+|};
+      let _, selected_id, _ = catalog_ids ~extra_env ~cli layout in
+      write_config layout ~stage_flag:killing_stage_flag
+        ~stage_name:"kill-selected" ~cache_directory:"team-cache" executable;
+      run_json ~extra_env ~cli layout ~label:"store-resolution run" ~exit_code:0
+        [ "--mutant"; selected_id ]
+      |> check_completed_report "store-resolution run";
+      let report =
+        run_cli ~extra_env ~cli layout
+          [ "report"; "latest"; "--json"; "--no-color" ]
+      in
+      expect_exit "store-resolution report" 0 report;
+      let open Yojson.Safe.Util in
+      expect_string "store-resolution report document type"
+        "ocaml-mutants.run-report-v1"
+        (parse_json "store-resolution report" report |> member "document_type");
+      let stats =
+        run_cli ~extra_env ~cli layout
+          [ "cache"; "stats"; "--path"; layout.workspace ]
+      in
+      expect_exit "store-resolution cache stats" 0 stats;
+      if not (contains_substring ~needle:"team-cache" stats.stdout) then
+        fail "cache stats did not resolve the configured directory: %S"
+          stats.stdout)
+
 let () =
   if Engine.Process_supervisor.helper_requested Sys.argv then
     exit (Engine.Process_supervisor.run_helper Sys.argv)
@@ -499,9 +562,10 @@ let () =
     try
       if Array.length Sys.argv <> 2 then
         fail "expected the ocaml-mutants CLI path as the only argument";
-      run_contract
-        (Unix.realpath Sys.argv.(1))
-        (Unix.realpath Sys.executable_name)
+      let cli = Unix.realpath Sys.argv.(1) in
+      let executable = Unix.realpath Sys.executable_name in
+      run_contract cli executable;
+      store_resolution_contract cli executable
     with Contract_failure message ->
       prerr_endline message;
       exit 1)

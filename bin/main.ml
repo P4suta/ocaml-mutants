@@ -398,8 +398,22 @@ let list_command =
        ~doc:"List discovered mutants without running tests.")
     list_term
 
-let report_action id json no_color =
-  match Run_store.create ~workspace:(Sys.getcwd ()) () with
+let store_path_option =
+  let doc =
+    "Resolve the workspace configuration and report store below $(docv)."
+  in
+  Arg.(value & opt string "." & info [ "path" ] ~docv:"PATH" ~doc)
+
+let store_for ~root =
+  match Config.load root with
+  | Error message -> Error (Error.make Error.Usage "%s" message)
+  | Ok config ->
+      Run_store.create ~workspace:root ?directory:config.Config.cache.directory
+        ()
+
+let report_action path id json no_color =
+  let root = Unix.realpath path in
+  match store_for ~root with
   | Error error -> print_error error
   | Ok store -> (
       match Run_store.load_run store id with
@@ -413,7 +427,8 @@ let report_action id json no_color =
 
 let report_term =
   let id = Arg.(value & pos 0 string "latest" & info [] ~docv:"RUN_ID") in
-  Term.(const report_action $ id $ json_option $ no_color_option)
+  Term.(
+    const report_action $ store_path_option $ id $ json_option $ no_color_option)
 
 let report_command =
   Cmd.v
@@ -478,29 +493,30 @@ let init_command =
        ~doc:"Write a documented .ocaml-mutants.toml starter file.")
     Term.(const init_action $ path_argument)
 
-let with_store action =
-  match Run_store.create () with
+let with_store path action =
+  let root = Unix.realpath path in
+  match store_for ~root with
   | Error error -> print_error error
   | Ok store -> action store
 
-let cache_stats_action () =
-  with_store (fun store ->
+let cache_stats_action path =
+  with_store path (fun store ->
       let files, bytes = Run_store.stats store in
       Printf.printf "%s\n%d files, %Ld bytes\n"
         (Run_store.directory store)
         files bytes;
       0)
 
-let cache_gc_action days =
-  with_store (fun store ->
+let cache_gc_action path days =
+  with_store path (fun store ->
       match Run_store.gc store ~older_than_days:days with
       | Ok count ->
           Printf.printf "Removed %d expired cache files\n" count;
           0
       | Error error -> print_error error)
 
-let cache_clean_action () =
-  with_store (fun store ->
+let cache_clean_action path =
+  with_store path (fun store ->
       match Run_store.clean store with
       | Ok () ->
           Printf.printf "Cleaned %s\n" (Run_store.directory store);
@@ -511,7 +527,7 @@ let cache_command =
   let stats =
     Cmd.v
       (command_info "stats" ~doc:"Show cache usage.")
-      Term.(const cache_stats_action $ const ())
+      Term.(const cache_stats_action $ store_path_option)
   in
   let days =
     Arg.(
@@ -521,12 +537,12 @@ let cache_command =
   let gc =
     Cmd.v
       (command_info "gc" ~doc:"Remove expired cache entries.")
-      Term.(const cache_gc_action $ days)
+      Term.(const cache_gc_action $ store_path_option $ days)
   in
   let clean =
     Cmd.v
       (command_info "clean" ~doc:"Remove all cached runs and outcomes.")
-      Term.(const cache_clean_action $ const ())
+      Term.(const cache_clean_action $ store_path_option)
   in
   Cmd.group
     (command_info "cache" ~doc:"Inspect or maintain the mutation cache.")
