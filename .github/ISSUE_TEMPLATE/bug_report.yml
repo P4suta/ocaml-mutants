@@ -1,0 +1,49 @@
+name: Bug report
+description: Something behaved incorrectly or failed unexpectedly
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: ocaml-mutants version
+      description: Output of `ocaml-mutants --version`
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, OCaml version, and dune version
+      placeholder: Windows 11, OCaml 5.5.0, dune 3.24.2
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: >-
+        The command you ran, what you expected, and what happened instead.
+        Include the exit code.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: >-
+        The smallest Dune workspace layout and `.ocaml-mutants.toml` that
+        reproduce the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Native run report
+      description: >-
+        If a run completed, paste the relevant parts of
+        `ocaml-mutants report latest --json` (it contains no source code
+        beyond the mutated byte spans).
+      render: json
+    validations:
+      required: false

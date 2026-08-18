@@ -11,9 +11,9 @@ while leaving the source workspace untouched.
 maintainer: ["ocaml-mutants contributors"]
 authors: ["ocaml-mutants contributors"]
 license: "MIT OR Apache-2.0"
-homepage: "https://github.com/ocaml-mutants/ocaml-mutants"
-bug-reports: "https://github.com/ocaml-mutants/ocaml-mutants/issues"
-dev-repo: "git+https://github.com/ocaml-mutants/ocaml-mutants.git"
+homepage: "https://github.com/P4suta/ocaml-mutants"
+bug-reports: "https://github.com/P4suta/ocaml-mutants/issues"
+dev-repo: "git+https://github.com/P4suta/ocaml-mutants.git"
 depends: [
   "ocaml" {>= "5.4" & < "5.6"}
   "dune" {>= "3.21" & < "4.0"}

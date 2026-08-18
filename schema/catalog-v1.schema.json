@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ocaml-mutants/ocaml-mutants/schema/catalog-v1.schema.json",
+  "$id": "https://github.com/P4suta/ocaml-mutants/schema/catalog-v1.schema.json",
   "title": "ocaml-mutants catalog-v1",
   "type": "object",
   "required": ["document_type", "schema_version", "workspace", "profile", "selection", "mutants", "skips"],

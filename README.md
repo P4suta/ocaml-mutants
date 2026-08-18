@@ -1,5 +1,7 @@
 # ocaml-mutants
 
+[![CI](https://github.com/P4suta/ocaml-mutants/actions/workflows/ci.yml/badge.svg)](https://github.com/P4suta/ocaml-mutants/actions/workflows/ci.yml)
+
 `ocaml-mutants` is a type-aware mutation testing CLI for modern Dune projects.
 Run it at the root of a project: it performs a normal Dune build, reads compiler
 Typedtrees, creates an isolated source snapshot, instruments all selected

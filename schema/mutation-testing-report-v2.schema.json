@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/ocaml-mutants/ocaml-mutants/schema/mutation-testing-report-v2.schema.json",
+  "$id": "https://github.com/P4suta/ocaml-mutants/schema/mutation-testing-report-v2.schema.json",
   "title": "ocaml-mutants Mutation Testing Report Schema v2 projection",
   "description": "The strict Mutation Testing Report Schema v2 surface emitted by ocaml-mutants. Complete modeled OCaml-specific engine state remains in run-report-v1; process-output captures there are intentionally bounded.",
   "type": "object",

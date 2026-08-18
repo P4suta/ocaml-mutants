@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ocaml-mutants/ocaml-mutants/schema/run-report-v1.schema.json",
+  "$id": "https://github.com/P4suta/ocaml-mutants/schema/run-report-v1.schema.json",
   "title": "ocaml-mutants run-report-v1",
   "type": "object",
   "required": ["document_type", "schema_version", "run_id", "status", "started_at", "finished_at", "workspace", "profile", "selection", "test", "cache", "summary", "mutants", "not_run", "expectations", "failure", "skips", "warnings"],
