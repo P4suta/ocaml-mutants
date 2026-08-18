@@ -252,12 +252,16 @@ let test_live_marker_excludes_ambient_replacement () =
           ignore (Engine.Run_store.abandon_reservation store reservation);
           raw_remove_noerr marker)
         (fun () ->
+          (* Windows delete/write sharing excludes the ambient writer; POSIX has
+             no mandatory exclusion, so the in-place rewrite succeeds and the
+             exact abandon below still deletes through the pinned inode. *)
           (match Engine.Util.write_file marker "foreign-owner\n" with
           | Error _ when Sys.win32 -> ()
           | Error message -> Alcotest.fail message
-          | Ok () ->
+          | Ok () when Sys.win32 ->
               Alcotest.fail
-                "live reservation marker allowed an independent ambient writer");
+                "live reservation marker allowed an independent ambient writer"
+          | Ok () -> ());
           get_ok (Engine.Run_store.abandon_reservation store reservation);
           Alcotest.(check bool)
             "exact abandon deletes the captured marker" false
