@@ -223,7 +223,12 @@ let test_summary_is_derived () =
       "expected_survivors";
       "unexpected_survivors";
       "unfulfilled_expectations";
+      "detected";
     ];
+  (* 250 is outside the reachable [0, 100] range, so it contradicts every
+     genuine score including the null one. *)
+  reject "contradictory summary.score"
+    (map_member "summary" (replace_member "score" (`Float 250.0)) encoded);
   reject "unknown summary kind"
     (map_member "summary" (replace_member "kind" (`String "unknown")) encoded)
 

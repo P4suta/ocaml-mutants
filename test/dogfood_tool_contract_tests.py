@@ -158,6 +158,8 @@ def valid_report() -> dict[str, object]:
             "expected_survivors": 0,
             "unexpected_survivors": 0,
             "unfulfilled_expectations": 0,
+            "detected": 1,
+            "score": 100.0,
         },
         "mutants": [
             {
@@ -214,6 +216,8 @@ def report_contract(report_tool: str, schema: str) -> None:
         summary["killed"] = 0
         summary["survived"] = 1
         summary["unexpected_survivors"] = 1
+        summary["detected"] = 0
+        summary["score"] = 0.0
         report_path.write_text(json.dumps(survivor), encoding="utf-8")
         require_failure(
             "unexpected survivor",

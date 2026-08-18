@@ -182,6 +182,7 @@ def verify_report(report: dict[str, Any], exit_code: int) -> tuple[int, int, int
         if raw_expectation.get("status") != "fulfilled":
             ledger_failures.append(full_id)
 
+    detected = counts["killed"] + counts["timeout"]
     summary_expected = {
         "total": len(mutants),
         "executed": len(mutants),
@@ -196,12 +197,30 @@ def verify_report(report: dict[str, Any], exit_code: int) -> tuple[int, int, int
         ),
         "unexpected_survivors": len(unexpected),
         "unfulfilled_expectations": 0,
+        "detected": detected,
     }
     for name, expected in summary_expected.items():
         actual = integer_field(summary, name)
         if actual != expected:
             raise ReportError(
                 f"summary.{name}={actual} contradicts derived value {expected}"
+            )
+    scoreable = detected + len(unexpected)
+    score = summary.get("score")
+    if scoreable == 0:
+        if score is not None:
+            raise ReportError(
+                f"summary.score={score!r} contradicts the empty scoreable set"
+            )
+    else:
+        derived_score = 100.0 * detected / scoreable
+        if (
+            isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or abs(score - derived_score) > 1e-9
+        ):
+            raise ReportError(
+                f"summary.score={score!r} contradicts derived value {derived_score}"
             )
 
     if counts["inconclusive"]:

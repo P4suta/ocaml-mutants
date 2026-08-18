@@ -14,6 +14,17 @@ field independent of the selection description; a complete or partial summary;
 executed mutants; explicit `not_run` mutants; structured phase/cause failures;
 and skip counts with sorted, unique, concrete source examples.
 
+The summary carries a derived mutation score alongside its raw counters.
+`summary.detected` is `killed + timeout` (a recorded timeout is always
+serially confirmed). `summary.score` is
+`100 × detected / (detected + unexpected_survivors)`, or `null` when that
+denominator is zero. Expected survivors, inconclusive results, errors, and
+not-run mutants are excluded from the denominator: the first is a declared
+equivalent mutant, and the rest are infrastructure signals that already
+surface through exit code 2. A score of 100 therefore coincides with exit
+code 0. The engine records the score as diagnostic output; it applies no
+threshold policy to it.
+
 Each executed mutant has a concrete versioned rule, separate stdout and stderr
 captures, total byte counts, and truncation flags. IDs include the 20-hex display
 prefix and the full SHA-256 identity. A timeout retry retains the initial timeout

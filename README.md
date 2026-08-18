@@ -120,6 +120,12 @@ inconclusive. Ctrl-C returns exit code 130.
 | 2 | Infrastructure failure, inconclusive result, not-run mutant, or stale/unfulfilled expectation |
 | 130 | Interrupted |
 
+The terminal summary and native JSON report also carry a mutation score:
+detected mutants (kills plus confirmed timeouts) over detected plus unexpected
+survivors, so 100% coincides with exit code 0. Declared expected survivors and
+infrastructure results are excluded from the denominator. The engine reports
+the score as a diagnostic and applies no threshold policy to it.
+
 ## Documentation
 
 - [Architecture](https://github.com/ocaml-mutants/ocaml-mutants/blob/main/docs/architecture.md)

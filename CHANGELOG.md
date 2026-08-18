@@ -21,6 +21,14 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Added
 
+- A derived mutation score in the terminal summary and the native run report:
+  `summary.detected` (`killed + timeout`) and `summary.score`
+  (`100 × detected / (detected + unexpected_survivors)`, `null` when the
+  denominator is zero). Expected survivors and infrastructure results stay out
+  of the denominator, so a score of 100 coincides with exit code 0. The score
+  is diagnostic only; no threshold policy is attached to it. Pre-release
+  `run-report-v1` schema change: previously stored local reports no longer
+  decode (fail-closed); clear them with `ocaml-mutants cache clean`.
 - Type-aware mutation discovery from Dune-produced Typedtrees.
 - Isolated workspace snapshots and single-pass interval-tree instrumentation.
 - Domain worker scheduler with POSIX process groups and Windows Job Objects.

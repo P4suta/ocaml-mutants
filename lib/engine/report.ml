@@ -189,6 +189,20 @@ let print_run ?(color = false) formatter run =
     (colorize color Diagnostic (Printf.sprintf "%d inconclusive" inconclusive))
     (colorize color Diagnostic (Printf.sprintf "%d error" error))
     (List.length not_run);
+  (* Kills plus confirmed timeouts over unexpected survivors: the same counts
+     the exit decision uses, so 100% lines up with exit 0. *)
+  let detected = killed + timeout in
+  let scoreable = detected + unexpected_survivors in
+  (if scoreable = 0 then
+     Format.fprintf formatter "Mutation score: n/a (no scoreable mutants)@."
+   else
+     let score = 100. *. float_of_int detected /. float_of_int scoreable in
+     Format.fprintf formatter "Mutation score: %s (%d/%d detected)%s@."
+       (colorize color
+          (if detected = scoreable then Success else Failure)
+          (Printf.sprintf "%.1f%%" score))
+       detected scoreable
+       (if not_run <> [] then " (executed mutants only)" else ""));
   print_expectations ~color formatter run.expectations;
   print_warnings ~color formatter run.warnings;
   print_skipped formatter run.skipped

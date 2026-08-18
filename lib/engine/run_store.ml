@@ -2295,6 +2295,8 @@ type summary = {
   expected_survivors : int;
   unexpected_survivors : int;
   unfulfilled_expectations : int;
+  detected : int;
+  score : float option;
 }
 
 let summary (run : run) =
@@ -2349,6 +2351,16 @@ let summary (run : run) =
             0)
       0 run.expectations
   in
+  (* Detected mutants are kills plus confirmed timeouts; the score denominator
+     adds only unexpected survivors. Expected survivors, inconclusive results,
+     errors, and not-run mutants carry no detection signal, and the last three
+     already surface through exit code 2. *)
+  let detected = killed + timeout in
+  let scoreable = detected + unexpected_survivors in
+  let score =
+    if scoreable = 0 then None
+    else Some (100. *. float_of_int detected /. float_of_int scoreable)
+  in
   {
     kind =
       (match run.completeness with
@@ -2365,6 +2377,8 @@ let summary (run : run) =
     expected_survivors;
     unexpected_survivors;
     unfulfilled_expectations;
+    detected;
+    score;
   }
 
 let summary_json run =
@@ -2383,6 +2397,9 @@ let summary_json run =
       ("expected_survivors", `Int summary.expected_survivors);
       ("unexpected_survivors", `Int summary.unexpected_survivors);
       ("unfulfilled_expectations", `Int summary.unfulfilled_expectations);
+      ("detected", `Int summary.detected);
+      ( "score",
+        match summary.score with None -> `Null | Some score -> `Float score );
     ]
 
 let failure_to_json error =
@@ -2703,6 +2720,8 @@ let validate_summary encoded run =
       "expected_survivors";
       "unexpected_survivors";
       "unfulfilled_expectations";
+      "detected";
+      "score";
     ]
   in
   List.fold_left

@@ -159,6 +159,13 @@ def main():
         report_validator.validate(report)
         summary = report["summary"]
         assert summary["total"] == summary["executed"] + summary["not_run"]
+        assert summary["detected"] == summary["killed"] + summary["timeout"]
+        scoreable = summary["detected"] + summary["unexpected_survivors"]
+        if scoreable == 0:
+            assert summary["score"] is None
+        else:
+            derived = 100.0 * summary["detected"] / scoreable
+            assert abs(summary["score"] - derived) < 1e-9
 
         stryker_report = run(
             [
