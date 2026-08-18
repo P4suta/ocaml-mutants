@@ -57,6 +57,17 @@ external raw_witness_is_alive : nativeint -> bool
 external raw_witness_close : nativeint -> unit
   = "ocaml_mutants_process_witness_close"
 
+external raw_process_in_any_job : unit -> int
+  = "ocaml_mutants_process_in_any_job"
+
+type job_membership = In_some_job | In_no_job | Membership_unknown
+
+let current_job_membership () =
+  match raw_process_in_any_job () with
+  | 1 -> In_some_job
+  | 0 -> In_no_job
+  | _ -> Membership_unknown
+
 type liveness_witness = { witness_pid : int; witness_handle : nativeint }
 
 let open_liveness_witness pid =

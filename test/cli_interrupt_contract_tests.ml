@@ -353,16 +353,27 @@ let write_all descriptor value =
   in
   write_from 0
 
-let marker_contents ~nonce ~role ~pid ~cwd =
+let marker_contents ~nonce ~role ~pid ~job ~cwd =
   Printf.sprintf
-    "owner=cli-interrupt-contract\nnonce=%s\nrole=%s\npid=%d\ncwd=%s\n" nonce
-    role pid (hex_encode cwd)
+    "owner=cli-interrupt-contract\nnonce=%s\nrole=%s\npid=%d\njob=%s\ncwd=%s\n"
+    nonce role pid job (hex_encode cwd)
+
+(* Diagnostic evidence for the supervision investigation (issue #3): whether the
+   tree member sits inside any Windows Job at readiness time. CI runners may
+   wrap steps in their own Job, so "yes" is inconclusive while "no" is a
+   definitive escape from the supervisor's Job as well. *)
+let job_membership_string () =
+  match Engine.Process_supervisor.current_job_membership () with
+  | Engine.Process_supervisor.In_some_job -> "yes"
+  | Engine.Process_supervisor.In_no_job -> "no"
+  | Engine.Process_supervisor.Membership_unknown -> "unknown"
 
 let notify_and_block ~host ~port ~nonce ~control ~role =
   let pid = Unix.getpid () in
+  let job = job_membership_string () in
   let cwd = Unix.realpath (Sys.getcwd ()) in
   let marker = Filename.concat control (role ^ ".ready") in
-  write marker (marker_contents ~nonce ~role ~pid ~cwd);
+  write marker (marker_contents ~nonce ~role ~pid ~job ~cwd);
   let socket = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.set_close_on_exec socket;
   Fun.protect
@@ -371,7 +382,8 @@ let notify_and_block ~host ~port ~nonce ~control ~role =
       Unix.connect socket
         (Unix.ADDR_INET (Unix.inet_addr_of_string host, int_of_string port));
       write_all socket
-        (Printf.sprintf "%s\t%s\t%d\t%s\n" nonce role pid (hex_encode cwd));
+        (Printf.sprintf "%s\t%s\t%d\t%s\t%s\n" nonce role pid job
+           (hex_encode cwd));
       let byte = Bytes.create 1 in
       let rec await_owner_close () =
         match Unix.read socket byte 0 1 with
@@ -430,7 +442,12 @@ let run_grandchild () =
   let host, port, nonce, control = helper_arguments () in
   notify_and_block ~host ~port ~nonce ~control ~role:"grandchild"
 
-type readiness = { role : string; pid : int; snapshot : string }
+type readiness = {
+  role : string;
+  pid : int;
+  in_job : string;
+  snapshot : string;
+}
 
 let read_protocol_line deadline descriptor =
   Unix.set_nonblock descriptor;
@@ -460,7 +477,7 @@ let read_protocol_line deadline descriptor =
 
 let parse_readiness ~nonce line =
   match String.split_on_char '\t' line with
-  | [ actual_nonce; role; pid; snapshot ] ->
+  | [ actual_nonce; role; pid; in_job; snapshot ] ->
       if not (String.equal actual_nonce nonce) then
         fail "readiness nonce did not authenticate the owned process";
       if not (List.mem role [ "stage"; "child"; "grandchild" ]) then
@@ -470,7 +487,10 @@ let parse_readiness ~nonce line =
         | Some pid when pid > 0 -> pid
         | Some _ | None -> fail "readiness role %s supplied an invalid PID" role
       in
-      { role; pid; snapshot = hex_decode snapshot }
+      if not (List.mem in_job [ "yes"; "no"; "unknown" ]) then
+        fail "readiness role %s supplied an invalid job membership %S" role
+          in_job;
+      { role; pid; in_job; snapshot = hex_decode snapshot }
   | _ -> fail "malformed readiness record: %S" line
 
 let create_listener () =
@@ -529,7 +549,7 @@ let await_readiness layout listener connections owned =
         in
         let expected =
           marker_contents ~nonce:layout.nonce ~role:ready.role ~pid:ready.pid
-            ~cwd:ready.snapshot
+            ~job:ready.in_job ~cwd:ready.snapshot
         in
         if not (String.equal actual expected) then
           fail "readiness marker for %s did not match its authenticated record"
@@ -861,7 +881,7 @@ let run_contract cli executable =
                 let witnesses =
                   List.map
                     (fun ready ->
-                      ( ready.role,
+                      ( Printf.sprintf "%s(job=%s)" ready.role ready.in_job,
                         Engine.Process_supervisor.open_liveness_witness
                           ready.pid ))
                     readiness

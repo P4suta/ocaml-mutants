@@ -479,6 +479,22 @@ CAMLprim value ocaml_mutants_process_witness_is_alive(value handle_value) {
 #endif
 }
 
+/* Diagnostic only: whether the calling process is inside any Job Object.
+   1 = yes, 0 = no, -1 = unknown (query failed or non-Windows).  CI runners
+   may wrap every step in their own Job, so a "yes" is inconclusive while a
+   "no" is a definitive escape from every Job including the supervisor's. */
+CAMLprim value ocaml_mutants_process_in_any_job(value unit) {
+  CAMLparam1(unit);
+#ifdef _WIN32
+  BOOL in_job = FALSE;
+  if (!IsProcessInJob(GetCurrentProcess(), NULL, &in_job))
+    CAMLreturn(Val_int(-1));
+  CAMLreturn(Val_int(in_job ? 1 : 0));
+#else
+  CAMLreturn(Val_int(-1));
+#endif
+}
+
 CAMLprim value ocaml_mutants_process_witness_close(value handle_value) {
   CAMLparam1(handle_value);
 #ifdef _WIN32

@@ -84,3 +84,11 @@ val open_liveness_witness : int -> liveness_witness
 val witness_pid : liveness_witness -> int
 val witness_is_alive : liveness_witness -> bool
 val close_liveness_witness : liveness_witness -> unit
+
+type job_membership = In_some_job | In_no_job | Membership_unknown
+
+val current_job_membership : unit -> job_membership
+(** Diagnostic only: whether the calling process sits inside any Windows Job
+    Object. CI runners may wrap every step in their own Job, so [In_some_job] is
+    inconclusive, while [In_no_job] proves escape from every Job including the
+    supervisor's. Non-Windows platforms report [Membership_unknown]. *)
