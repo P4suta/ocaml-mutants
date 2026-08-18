@@ -112,10 +112,9 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Python drives the schema-validation test rules, which only run with
-      # the suite on Windows below.
+      # Python drives the schema-validation test rules, which run with the
+      # dogfood contracts on every OS.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: runner.os == 'Windows'
         with:
           python-version: "3.13"
       - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
@@ -123,18 +122,24 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml }}
           dune-cache: true
       - run: python -m pip install --requirement requirements-dev.txt
-        if: runner.os == 'Windows'
       - run: opam install . --deps-only --with-test
       - run: opam exec -- dune build @all
-      # The POSIX Run_store/Dir_cap substrate is a documented pre-release gate
-      # (docs/architecture.md), so the store-backed suites can only pass on
-      # Windows today. Re-enable the POSIX rows when the migration lands.
-      - name: Tests (Windows only until the POSIX store lands)
+      # Strict mode turns Unsupported-driven skips into failures on every OS;
+      # each platform proves its complete directory-capability surface.
+      - name: Directory-capability suites
+        run: opam exec -- dune build @dircap
+        env:
+          OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE: "1"
+      - name: Dogfood contracts
+        run: opam exec -- dune build @dogfood-fast
+      # dune runtest additionally drives the CLI end-to-end suites; the only
+      # remaining POSIX gap is byte-exact preprocessor reverse-mapping in the
+      # e2e ppx fixture (docs/architecture.md), so runtest stays Windows-only
+      # until that lands.
+      - name: Tests (Windows only until POSIX preprocessor reverse-mapping
+          lands)
         if: runner.os == 'Windows'
         run: opam exec -- dune runtest
-      - name: Dogfood contracts (Windows only until the POSIX store lands)
-        if: runner.os == 'Windows'
-        run: opam exec -- dune build @dogfood-fast
 
   dune-minimum:
     needs: changes

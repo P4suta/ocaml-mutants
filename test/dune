@@ -150,6 +150,31 @@
  (action
   (run %{exe:dir_cap_system_contract_tests.exe})))
 
+; The dircap alias runs the directory-capability suites alone so every CI OS
+; can gate on them even while the CLI-driven store suites remain gated.  The
+; env_var dependency reruns them when the strict no-silent-skip mode toggles.
+
+(rule
+ (alias dircap)
+ (deps
+  (env_var OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE))
+ (action
+  (run %{exe:dir_cap_contract_tests.exe})))
+
+(rule
+ (alias dircap)
+ (deps
+  (env_var OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE))
+ (action
+  (run %{exe:dir_cap_system_contract_tests.exe})))
+
+(rule
+ (alias dircap)
+ (deps
+  (env_var OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE))
+ (action
+  (run %{exe:cache_fs_contract_tests.exe})))
+
 (test
  (name workspace_snapshot_contract_tests)
  (libraries ocaml_mutants_engine alcotest))

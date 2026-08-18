@@ -13,8 +13,10 @@ env:
 
 jobs:
   gates:
-    # Windows runner: the store-backed test suites only pass on Windows until
-    # the POSIX Run_store/Dir_cap migration lands (docs/architecture.md).
+    # Windows runner: dune runtest still includes the CLI e2e suites, whose
+    # byte-exact preprocessor reverse-mapping only passes on Windows today
+    # (docs/architecture.md).  The directory-capability substrate itself is
+    # cross-OS and CI gates it on every OS.
     runs-on: windows-latest
     defaults:
       run:

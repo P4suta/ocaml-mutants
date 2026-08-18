@@ -448,3 +448,58 @@ CAMLprim value ocaml_mutants_job_close(value job_value) {
 #endif
   CAMLreturn(Val_unit);
 }
+
+/* A liveness witness pins one observed process while it is provably alive.
+   Windows recycles PIDs aggressively, so polling a bare PID can report an
+   unrelated newborn process as the observed one; a retained handle always
+   answers for the original process.  Waiting with a zero timeout also avoids
+   the STILL_ACTIVE exit-code ambiguity. */
+CAMLprim value ocaml_mutants_process_open_witness(value pid_value) {
+  CAMLparam1(pid_value);
+#ifdef _WIN32
+  HANDLE process =
+      OpenProcess(SYNCHRONIZE, FALSE, (DWORD)Int_val(pid_value));
+  CAMLreturn(caml_copy_nativeint((intnat)process));
+#else
+  (void)pid_value;
+  CAMLreturn(caml_copy_nativeint(0));
+#endif
+}
+
+CAMLprim value ocaml_mutants_process_witness_is_alive(value handle_value) {
+  CAMLparam1(handle_value);
+#ifdef _WIN32
+  HANDLE process = (HANDLE)Nativeint_val(handle_value);
+  BOOL running =
+      process != NULL && WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+  CAMLreturn(Val_bool(running));
+#else
+  (void)handle_value;
+  CAMLreturn(Val_false);
+#endif
+}
+
+/* Diagnostic only: whether the calling process is inside any Job Object.
+   1 = yes, 0 = no, -1 = unknown (query failed or non-Windows).  CI runners
+   may wrap every step in their own Job, so a "yes" is inconclusive while a
+   "no" is a definitive escape from every Job including the supervisor's. */
+CAMLprim value ocaml_mutants_process_in_any_job(value unit) {
+  CAMLparam1(unit);
+#ifdef _WIN32
+  BOOL in_job = FALSE;
+  if (!IsProcessInJob(GetCurrentProcess(), NULL, &in_job))
+    CAMLreturn(Val_int(-1));
+  CAMLreturn(Val_int(in_job ? 1 : 0));
+#else
+  CAMLreturn(Val_int(-1));
+#endif
+}
+
+CAMLprim value ocaml_mutants_process_witness_close(value handle_value) {
+  CAMLparam1(handle_value);
+#ifdef _WIN32
+  HANDLE process = (HANDLE)Nativeint_val(handle_value);
+  if (process != NULL) CloseHandle(process);
+#endif
+  CAMLreturn(Val_unit);
+}

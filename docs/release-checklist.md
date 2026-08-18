@@ -56,11 +56,11 @@
 - [ ] Run native single-leaf materialization, owner-private directory/file
   creation, captured file/empty-directory deletion, shared/exclusive locking,
   and atomic no-replace/replace publication fault and contention contracts on
-  Windows
+  every OS with strict capability coverage
+  (`OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE=1 dune build @dircap`)
 - [ ] Close and exercise every production `Dir_cap.System` `Unsupported`
-  required by supported run/cache paths on POSIX, including missing-root and
-  owner-private directory creation, captured deletion, atomic publication, and
-  recursive deletion authority with mount-boundary proof; a remaining
+  required by supported run/cache paths, including production recursive
+  deletion authority with mount-boundary proof on every OS; a remaining
   `Unsupported` is a release hold for that platform
 - [ ] Confirm the install contains the CLI, all three schemas, and the English
   schema reference, but no installed OCaml library API

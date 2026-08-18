@@ -72,3 +72,23 @@ val helper_requested : string array -> bool
 val run_helper : string array -> int
 val process_id : int -> int
 val process_is_alive : int -> bool
+
+type liveness_witness
+(** Exact liveness authority for one observed process. On Windows the witness
+    retains a handle opened while the process was provably alive, so a recycled
+    PID can never masquerade as the witnessed process, and a PID whose handle
+    cannot be opened is reported as already dead. On POSIX the witness answers
+    with PID liveness. *)
+
+val open_liveness_witness : int -> liveness_witness
+val witness_pid : liveness_witness -> int
+val witness_is_alive : liveness_witness -> bool
+val close_liveness_witness : liveness_witness -> unit
+
+type job_membership = In_some_job | In_no_job | Membership_unknown
+
+val current_job_membership : unit -> job_membership
+(** Diagnostic only: whether the calling process sits inside any Windows Job
+    Object. CI runners may wrap every step in their own Job, so [In_some_job] is
+    inconclusive, while [In_no_job] proves escape from every Job including the
+    supervisor's. Non-Windows platforms report [Membership_unknown]. *)

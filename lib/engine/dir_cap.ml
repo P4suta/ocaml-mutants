@@ -458,8 +458,11 @@ module System = struct
     raw_handle ->
     string ->
     string ->
+    string ->
     int ->
-    (bool, raw_deletion_failure) result = "ocaml_mutants_dircap_delete_captured"
+    (bool, raw_deletion_failure) result
+    = "ocaml_mutants_dircap_delete_captured_byte"
+      "ocaml_mutants_dircap_delete_captured"
 
   external raw_atomic_rename :
     raw_handle ->
@@ -467,7 +470,10 @@ module System = struct
     string ->
     int ->
     string ->
-    (raw_error list, raw_error) result = "ocaml_mutants_dircap_atomic_rename"
+    string ->
+    (raw_error list, raw_error) result
+    = "ocaml_mutants_dircap_atomic_rename_byte"
+      "ocaml_mutants_dircap_atomic_rename"
 
   external raw_try_lock :
     raw_handle ->
@@ -534,6 +540,10 @@ module System = struct
     identity : Identity.t;
     parent_identity : Identity.t option;
     deletion_authority : bool;
+    leaf : string option;
+        (* Raw capture name below the recorded parent; POSIX descriptor-verified
+           deletion and publication source consumption resolve exactly this
+           retained name, never a reconstructed path. *)
   }
 
   type file = {
@@ -543,6 +553,7 @@ module System = struct
     identity : Identity.t;
     parent_identity : Identity.t;
     deletion_authority : bool;
+    leaf : string option;
   }
 
   type path_probe = {
@@ -967,7 +978,7 @@ module System = struct
 
   let exclusive_missing_leaf_separation (forbidden : path_probe)
       (candidate : path_probe) =
-    Sys.win32 && forbidden.missing = []
+    forbidden.missing = []
     && (match candidate.missing with
       | [ _ ] -> true
       | [] | _ :: _ :: _ -> false)
@@ -1145,18 +1156,10 @@ module System = struct
                                 identity = witness.candidate_identity;
                                 parent_identity = None;
                                 deletion_authority = false;
+                                leaf = None;
                               },
                               Already_present,
                               [] ))
-                  | [ name ] when not Sys.win32 ->
-                      Error
-                        ( [],
-                          failure_of_error
-                            (make_error ~operation:Materialize
-                               ~class_:Unsupported ~native_domain:Contract
-                               ~native_code:
-                                 "owner-private-directory-create-unavailable"
-                               ~component:(Native_name.encode name) ()) )
                   | [ name ] -> (
                       let component = Native_name.encode name in
                       match
@@ -1196,6 +1199,7 @@ module System = struct
                                   parent_identity =
                                     Some witness.candidate_identity;
                                   deletion_authority = true;
+                                  leaf = Some name.Native_name.raw;
                                 },
                                 Newly_created,
                                 [ Creation_observed name ] ))
@@ -1328,6 +1332,7 @@ module System = struct
         identity = stat.identity;
         parent_identity = Some directory.identity;
         deletion_authority = false;
+        leaf = None;
       }
 
   let open_directory_for_delete_no_follow (directory : dir) name =
@@ -1347,6 +1352,7 @@ module System = struct
         identity = stat.identity;
         parent_identity = Some directory.identity;
         deletion_authority = true;
+        leaf = Some name.Native_name.raw;
       }
 
   let duplicate_directory (directory : dir) =
@@ -1364,6 +1370,7 @@ module System = struct
            identity = directory.identity;
            parent_identity = directory.parent_identity;
            deletion_authority = directory.deletion_authority;
+           leaf = directory.leaf;
          })
 
   let open_file_no_follow (directory : dir) name =
@@ -1382,6 +1389,7 @@ module System = struct
         identity = stat.identity;
         parent_identity = directory.identity;
         deletion_authority = false;
+        leaf = None;
       }
 
   let open_file_for_delete_no_follow (directory : dir) name =
@@ -1400,6 +1408,7 @@ module System = struct
         identity = stat.identity;
         parent_identity = directory.identity;
         deletion_authority = true;
+        leaf = Some name.Native_name.raw;
       }
 
   let open_file_for_publish_no_follow (directory : dir) name =
@@ -1418,6 +1427,7 @@ module System = struct
         identity = stat.identity;
         parent_identity = directory.identity;
         deletion_authority = false;
+        leaf = Some name.Native_name.raw;
       }
 
   let read_captured (file : file) ~limit =
@@ -1451,6 +1461,7 @@ module System = struct
                 identity = stat.identity;
                 parent_identity = Some directory.identity;
                 deletion_authority = true;
+                leaf = Some name.Native_name.raw;
               }
         | Error (Raw_not_committed problem) ->
             Not_created (decode_error ~component Create_directory problem)
@@ -1483,6 +1494,7 @@ module System = struct
                 identity = stat.identity;
                 parent_identity = directory.identity;
                 deletion_authority = true;
+                leaf = Some name.Native_name.raw;
               }
         | Error (Raw_not_committed problem) ->
             Not_created (decode_error ~component Create_file problem)
@@ -1526,6 +1538,7 @@ module System = struct
             match
               raw_atomic_rename file.handle into.handle as_.Native_name.raw
                 raw_replacement into.identity
+                (Option.value file.leaf ~default:"")
             with
             | Error problem ->
                 Not_published
@@ -1613,7 +1626,9 @@ module System = struct
         | Ok () -> (
             match
               raw_delete_captured parent.handle file.handle parent.identity
-                expected 0
+                expected
+                (Option.value file.leaf ~default:"")
+                0
               |> decode_deletion operation ~cleanup_operation:Close_file
             with
             | `Not_committed error -> Deletion_not_committed error
@@ -1666,7 +1681,9 @@ module System = struct
         | Ok () -> (
             match
               raw_delete_captured parent.handle target.handle parent.identity
-                expected 1
+                expected
+                (Option.value target.leaf ~default:"")
+                1
               |> decode_deletion operation ~cleanup_operation:Close_directory
             with
             | `Not_committed error -> Deletion_not_committed error

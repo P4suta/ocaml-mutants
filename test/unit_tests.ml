@@ -2380,6 +2380,7 @@ let test_cache_never_returns_unproven_outcomes () =
   let directory = Filename.temp_file "ocaml-mutants-cache-test-" ".tmp" in
   Sys.remove directory;
   Unix.mkdir directory 0o700;
+  let directory = Unix.realpath directory in
   Fun.protect
     ~finally:(fun () -> ignore (Engine.Util.remove_tree directory))
     (fun () ->
@@ -2462,6 +2463,7 @@ let test_cache_ownership_and_concurrency () =
   let parent = Filename.temp_file "ocaml-mutants-cache-roots-" ".tmp" in
   Sys.remove parent;
   Unix.mkdir parent 0o700;
+  let parent = Unix.realpath parent in
   Fun.protect
     ~finally:(fun () -> ignore (Engine.Util.remove_tree parent))
     (fun () ->
