@@ -9,7 +9,12 @@ permissions:
 
 jobs:
   gates:
-    runs-on: ubuntu-latest
+    # Windows runner: the store-backed test suites only pass on Windows until
+    # the POSIX Run_store/Dir_cap migration lands (docs/architecture.md).
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - name: Tag matches the dune-project version

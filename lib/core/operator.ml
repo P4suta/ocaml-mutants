@@ -201,14 +201,7 @@ module Spec = struct
           Option
       | _ -> Other
 
-    let uid_is_stdlib uid =
-      match uid with
-      | Shape.Uid.Item { comp_unit; _ }
-      | Shape.Uid.Local_opaque_item { comp_unit; _ } ->
-          String.equal comp_unit "Stdlib"
-      | Shape.Uid.Compilation_unit unit -> String.equal unit "Stdlib"
-      | Shape.Uid.Predef _ -> true
-      | Shape.Uid.Internal -> false
+    let uid_is_stdlib = Shape_uid_compat.is_stdlib
 
     let path_names_stdlib_value path name =
       match Path.flatten path with

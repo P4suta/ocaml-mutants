@@ -2,6 +2,10 @@
 #define _GNU_SOURCE
 #endif
 #define _POSIX_C_SOURCE 200809L
+/* Strict POSIX hides Darwin's BSD stat members (st_mtimespec); opt back in. */
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE 1
+#endif
 
 #include <caml/alloc.h>
 #include <caml/custom.h>

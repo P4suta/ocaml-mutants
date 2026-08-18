@@ -1,3 +1,17 @@
 (library
  (name ocaml_mutants_core)
  (libraries csexp digestif fpath compiler-libs.common))
+
+(data_only_dirs compat)
+
+(rule
+ (enabled_if
+  (< %{ocaml_version} 5.5))
+ (action
+  (copy compat/shape_uid_compat_pre55.ml shape_uid_compat.ml)))
+
+(rule
+ (enabled_if
+  (>= %{ocaml_version} 5.5))
+ (action
+  (copy compat/shape_uid_compat_55.ml shape_uid_compat.ml)))

@@ -545,9 +545,7 @@ let main_command =
          instruments one isolated workspace snapshot, and never edits the \
          source workspace.";
       `S Manpage.s_bugs;
-      `P
-        "Report issues at \
-         https://github.com/P4suta/ocaml-mutants/issues.";
+      `P "Report issues at https://github.com/P4suta/ocaml-mutants/issues.";
     ]
   in
   Cmd.group ~default:run_term
