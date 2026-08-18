@@ -32,7 +32,7 @@ exit policy, and interval-tree instrumentation.
   Stdlib identifiers for operator mutations, typed branch compatibility supplied
   by the compiler, non-ghost locations, and exact source slices. The typed
   existential `Operator.Spec` registry is the single production writer for all
-  30 rules: each typed visit site evaluates the registry once and commits the
+  40 rules: each typed visit site evaluates the registry once and commits the
   candidates validated against the exact source bytes, with no second
   generation path.
 - `Workspace_snapshot` derives copying and fingerprinting from one sorted
@@ -88,6 +88,30 @@ exit policy, and interval-tree instrumentation.
   complete `Workspace_snapshot` migration are still pre-release gates.
   Automatic outcome caching remains disabled until both that authority boundary
   and the complete input proof are closed.
+
+## Remaining requirements for automatic outcome caching
+
+`cache.mode = "auto"` stays proof-gated off. The cache key is already
+conservative — it includes the complete environment, the toolchain versions,
+the tool's own executable digest, the workspace digest, every catalog ID, and
+the rule/instrumentation/cache ABIs — so the open items are authority and
+input-proof gaps, not key strength:
+
+1. Authority boundary. Mutant outcome I/O and the GC/clean traversal must move
+   from path-based operations onto the owner-verified directory-capability
+   substrate, the six POSIX `Dir_cap.System` primitives must leave their
+   `Unsupported` stubs, and `Workspace_snapshot` cleanup must complete the same
+   migration. Until then a shared cache directory is not adversarially safe.
+2. Complete input proof. The opam switch's dependency closure is not yet part
+   of the key, so upgrading a library or PPX in place could produce a stale
+   hit; and a failed executable-digest read currently degrades to a shared
+   `unavailable` constant instead of disabling caching for that run
+   (fail-open). Inputs that cannot be proved — network access, absolute-path
+   reads, time, randomness — need an explicit user declaration equivalent to
+   `test.parallel_safe` before `auto` may trust a run.
+3. Semantics and acceptance. The `auto` policy needs a documented definition
+   (an `on` whose save failures degrade to warnings), a per-subcommand
+   read/write matrix, and green cross-OS directory-capability suites.
 
 ## Pipeline
 

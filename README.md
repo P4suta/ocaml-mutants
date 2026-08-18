@@ -100,8 +100,9 @@ keys are errors with file, line, and column information.
 Before mutation starts, both the analysis build and the configured baseline
 tests must pass. After instrumentation, the baseline runs again with no active
 mutant to verify semantic preservation. Each default Dune test worker receives
-an independent build directory and shares Dune's compilation cache. Custom
-commands run sequentially unless `test.parallel_safe = true`.
+an independent build directory, and Dune's shared compilation cache is
+explicitly disabled during mutation runs so artifacts cannot leak between
+mutants. Custom commands run sequentially unless `test.parallel_safe = true`.
 
 On POSIX, test commands run in their own session and the complete process group
 is terminated on timeout. On Windows, a private helper waits for its parent to
