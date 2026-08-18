@@ -8,6 +8,7 @@
 
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,6 +23,9 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
 
 extern char **environ;
 #endif
@@ -245,6 +249,151 @@ static void interrupt_close_handle(HANDLE *handle) {
   *handle = NULL;
 }
 #endif
+
+/* A liveness witness pins the kernel identity of an authenticated PID so the
+   later exit proof cannot be confused by PID reuse: Windows retains a real
+   process handle, Linux retains a pidfd. Platforms without such a mechanism
+   report Unavailable and the caller falls back to PID polling. */
+
+struct interrupt_witness {
+  int closed;
+#ifdef _WIN32
+  HANDLE process;
+#else
+  int pidfd;
+#endif
+};
+
+static void interrupt_witness_release(struct interrupt_witness *witness) {
+  if (witness->closed) return;
+#ifdef _WIN32
+  if (witness->process != NULL) {
+    CloseHandle(witness->process);
+    witness->process = NULL;
+  }
+#else
+  if (witness->pidfd >= 0) {
+    close(witness->pidfd);
+    witness->pidfd = -1;
+  }
+#endif
+  witness->closed = 1;
+}
+
+static void interrupt_witness_finalize(value witness_value) {
+  interrupt_witness_release(
+      (struct interrupt_witness *)Data_custom_val(witness_value));
+}
+
+static struct custom_operations interrupt_witness_operations = {
+    .identifier = "ocaml-mutants.test.interrupt-witness.v1",
+    .finalize = interrupt_witness_finalize,
+    .compare = custom_compare_default,
+    .hash = custom_hash_default,
+    .serialize = custom_serialize_default,
+    .deserialize = custom_deserialize_default,
+    .compare_ext = custom_compare_ext_default,
+    .fixed_length = custom_fixed_length_default};
+
+CAMLprim value ocaml_mutants_test_witness_open(value pid_value) {
+  CAMLparam1(pid_value);
+  CAMLlocal1(witness_value);
+  struct interrupt_witness *witness;
+  witness_value = caml_alloc_custom(&interrupt_witness_operations,
+                                    sizeof(struct interrupt_witness), 0, 1);
+  witness = (struct interrupt_witness *)Data_custom_val(witness_value);
+  memset(witness, 0, sizeof(*witness));
+#ifdef _WIN32
+  witness->process =
+      OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+                  (DWORD)Int_val(pid_value));
+  if (witness->process == NULL) {
+    DWORD error = GetLastError();
+    witness->closed = 1;
+    if (error == ERROR_INVALID_PARAMETER)
+      CAMLreturn(Val_int(1)); /* Already_exited */
+    CAMLreturn(interrupt_tagged(1, Val_int((int)error))); /* Open_failed */
+  }
+  CAMLreturn(interrupt_tagged(0, witness_value)); /* Witness */
+#elif defined(__linux__) && defined(SYS_pidfd_open)
+  witness->pidfd = (int)syscall(SYS_pidfd_open, (pid_t)Int_val(pid_value), 0);
+  if (witness->pidfd < 0) {
+    int error = errno;
+    witness->closed = 1;
+    if (error == ESRCH) CAMLreturn(Val_int(1));   /* Already_exited */
+    if (error == ENOSYS) CAMLreturn(Val_int(0));  /* Unavailable */
+    CAMLreturn(interrupt_tagged(1, Val_int(error))); /* Open_failed */
+  }
+  CAMLreturn(interrupt_tagged(0, witness_value)); /* Witness */
+#else
+  witness->closed = 1;
+  CAMLreturn(Val_int(0)); /* Unavailable */
+#endif
+}
+
+CAMLprim value ocaml_mutants_test_witness_exited(value witness_value) {
+  CAMLparam1(witness_value);
+  struct interrupt_witness *witness =
+      (struct interrupt_witness *)Data_custom_val(witness_value);
+  if (witness->closed) CAMLreturn(Val_true);
+#ifdef _WIN32
+  CAMLreturn(
+      Val_bool(WaitForSingleObject(witness->process, 0) == WAIT_OBJECT_0));
+#else
+  {
+    struct pollfd probe;
+    int observed;
+    probe.fd = witness->pidfd;
+    probe.events = POLLIN;
+    probe.revents = 0;
+    do {
+      observed = poll(&probe, 1, 0);
+    } while (observed < 0 && errno == EINTR);
+    CAMLreturn(Val_bool(observed > 0 &&
+                        (probe.revents & (POLLIN | POLLHUP)) != 0));
+  }
+#endif
+}
+
+CAMLprim value ocaml_mutants_test_witness_image(value pid_value) {
+  CAMLparam1(pid_value);
+  CAMLlocal2(result, image_value);
+#ifdef _WIN32
+  {
+    HANDLE process =
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+                    (DWORD)Int_val(pid_value));
+    wchar_t image[MAX_PATH];
+    DWORD length = MAX_PATH;
+    if (process == NULL) CAMLreturn(Val_int(0));
+    if (!QueryFullProcessImageNameW(process, 0, image, &length)) {
+      CloseHandle(process);
+      CAMLreturn(Val_int(0));
+    }
+    CloseHandle(process);
+    image_value = caml_copy_string_of_os(image);
+    result = caml_alloc(1, 0);
+    Store_field(result, 0, image_value);
+    CAMLreturn(result);
+  }
+#elif defined(__linux__)
+  {
+    char link[64];
+    char image[4096];
+    ssize_t length;
+    snprintf(link, sizeof(link), "/proc/%d/exe", Int_val(pid_value));
+    length = readlink(link, image, sizeof(image) - 1);
+    if (length <= 0) CAMLreturn(Val_int(0));
+    image[length] = '\0';
+    image_value = caml_copy_string(image);
+    result = caml_alloc(1, 0);
+    Store_field(result, 0, image_value);
+    CAMLreturn(result);
+  }
+#else
+  CAMLreturn(Val_int(0));
+#endif
+}
 
 CAMLprim value ocaml_mutants_test_interrupt_start(value request_value) {
   CAMLparam1(request_value);
