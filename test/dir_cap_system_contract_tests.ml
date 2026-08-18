@@ -36,12 +36,23 @@ let get_failure = function
   | Ok value -> value
   | Error (failure : C.failure) -> fail_error (C.issue_error failure.primary)
 
+(* Unsupported-driven skips normally keep optional-capability platforms green;
+   OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE=1 turns them into failures so CI on fully
+   supported platforms cannot silently lose coverage. *)
+let skip_unsupported (error : C.error) =
+  match Sys.getenv_opt "OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE" with
+  | None | Some "" | Some "0" -> Alcotest.skip ()
+  | Some _ ->
+      Alcotest.failf "native support required but %s returned Unsupported (%s)"
+        (C.operation_name error.operation)
+        error.native_code
+
 let acquire_lock = function
   | Ok (`Acquired lock) -> lock
   | Ok `Busy -> Alcotest.fail "lock unexpectedly busy"
   | Error (failure : C.failure) ->
       let error = C.issue_error failure.primary in
-      if error.class_ = C.Unsupported then Alcotest.skip ()
+      if error.class_ = C.Unsupported then skip_unsupported error
       else fail_error error
 
 let expect_lock_busy = function
@@ -397,107 +408,114 @@ let test_materialization_progress () =
             S.materialize witness
               ~permissions:C.Permissions.owner_private_directory
           in
-          (if not Sys.win32 then (
-             match outcome with
-             | S.Materialized materialized ->
-                 close_quietly S.close_directory materialized.directory;
-                 Alcotest.fail "POSIX claimed missing-root creation authority"
-             | S.Materialization_incomplete { created; failure } ->
-                 Alcotest.(check bool)
-                   "POSIX gap is explicit" true
-                   ((C.issue_error failure.primary).class_ = C.Unsupported);
-                 Alcotest.(check int)
-                   "POSIX committed nothing" 0 (List.length created);
-                 Alcotest.(check bool)
-                   "POSIX namespace unchanged" false
-                   (Sys.file_exists requested))
-           else
-             match outcome with
-             | S.Materialization_incomplete { failure; _ } ->
-                 fail_error (C.issue_error failure.primary)
-             | S.Materialized { directory; disposition; created; advisories } ->
-                 let live_directory = ref (Some directory) in
-                 Fun.protect
-                   (fun () ->
-                     Alcotest.(check bool)
-                       "one missing leaf is newly created" true
-                       (disposition = C.Newly_created);
-                     (match created with
-                     | [ S.Creation_observed name ] ->
-                         Alcotest.(check bool)
-                           "created evidence names the leaf" true
-                           (S.Native_name.equal name (native_name "cache"))
-                     | [ S.Creation_may_have_committed _ ] ->
-                         Alcotest.fail
-                           "successful materialization reported uncertain \
-                            commit"
-                     | _ ->
-                         Alcotest.fail
-                           "successful one-leaf materialization lost evidence");
-                     Alcotest.(check int)
-                       "witness teardown is clean" 0 (List.length advisories);
-                     Alcotest.(check bool)
-                       "created root is visible" true
-                       (Sys.file_exists requested);
+          (match outcome with
+          | S.Materialization_incomplete { failure; _ } ->
+              fail_error (C.issue_error failure.primary)
+          | S.Materialized { directory; disposition; created; advisories } ->
+              let live_directory = ref (Some directory) in
+              Fun.protect
+                (fun () ->
+                  Alcotest.(check bool)
+                    "one missing leaf is newly created" true
+                    (disposition = C.Newly_created);
+                  (match created with
+                  | [ S.Creation_observed name ] ->
+                      Alcotest.(check bool)
+                        "created evidence names the leaf" true
+                        (S.Native_name.equal name (native_name "cache"))
+                  | [ S.Creation_may_have_committed _ ] ->
+                      Alcotest.fail
+                        "successful materialization reported uncertain commit"
+                  | _ ->
+                      Alcotest.fail
+                        "successful one-leaf materialization lost evidence");
+                  Alcotest.(check int)
+                    "witness teardown is clean" 0 (List.length advisories);
+                  Alcotest.(check bool)
+                    "created root is visible" true
+                    (Sys.file_exists requested);
 
-                     let marker_name = native_name "reservation.marker" in
-                     let marker_path =
-                       Filename.concat requested "reservation.marker"
-                     in
-                     let marker =
-                       match
-                         S.create_file directory marker_name
-                           ~permissions:C.Permissions.owner_read_write
-                           ~contents:"owner-v2"
-                       with
-                       | S.Created file -> file
-                       | S.Not_created error -> fail_error error
-                       | S.Creation_incomplete { residual; failure } ->
-                           (match residual with
-                           | S.Captured file -> close_quietly S.close_file file
-                           | S.Uncaptured _ -> ());
-                           fail_error (C.issue_error failure.primary)
-                     in
-                     let live_marker = ref (Some marker) in
-                     Fun.protect
-                       (fun () ->
-                         match
-                           S.unlink_captured_file_if_identity ~parent:directory
-                             marker ~expected:(S.file_identity marker)
-                         with
-                         | C.Deletion_complete C.Unlinked ->
-                             live_marker := None;
-                             Alcotest.(check bool)
-                               "exact captured marker is gone" false
-                               (Sys.file_exists marker_path)
-                         | C.Deletion_not_committed error -> fail_error error
-                         | C.Deletion_complete _ ->
-                             Alcotest.fail
-                               "exact captured marker was not unlinked"
-                         | C.Deletion_incomplete { failure; _ } ->
-                             fail_error (C.issue_error failure.primary))
-                       ~finally:(fun () ->
-                         Option.iter (close_quietly S.close_file) !live_marker);
+                  let marker_name = native_name "reservation.marker" in
+                  let marker_path =
+                    Filename.concat requested "reservation.marker"
+                  in
+                  let marker =
+                    match
+                      S.create_file directory marker_name
+                        ~permissions:C.Permissions.owner_read_write
+                        ~contents:"owner-v2"
+                    with
+                    | S.Created file -> file
+                    | S.Not_created error -> fail_error error
+                    | S.Creation_incomplete { residual; failure } ->
+                        (match residual with
+                        | S.Captured file -> close_quietly S.close_file file
+                        | S.Uncaptured _ -> ());
+                        fail_error (C.issue_error failure.primary)
+                  in
+                  let live_marker = ref (Some marker) in
+                  Fun.protect
+                    (fun () ->
+                      match
+                        S.unlink_captured_file_if_identity ~parent:directory
+                          marker ~expected:(S.file_identity marker)
+                      with
+                      | C.Deletion_complete C.Unlinked ->
+                          live_marker := None;
+                          Alcotest.(check bool)
+                            "exact captured marker is gone" false
+                            (Sys.file_exists marker_path)
+                      | C.Deletion_not_committed error -> fail_error error
+                      | C.Deletion_complete _ ->
+                          Alcotest.fail "exact captured marker was not unlinked"
+                      | C.Deletion_incomplete { failure; _ } ->
+                          fail_error (C.issue_error failure.primary))
+                    ~finally:(fun () ->
+                      Option.iter (close_quietly S.close_file) !live_marker);
 
-                     let replacement = Filename.concat safe_path "released" in
-                     let replacement_blocked =
-                       try
-                         Sys.rename requested replacement;
-                         false
-                       with Sys_error _ | Unix.Unix_error _ -> true
-                     in
-                     Alcotest.(check bool)
-                       "live materialized root refuses replacement" true
-                       replacement_blocked;
-                     expect_cleanup_complete "materialized root close"
-                       (S.close_directory directory);
-                     live_directory := None;
-                     rename "rename materialized root after release" requested
-                       replacement)
-                   ~finally:(fun () ->
-                     Option.iter
-                       (close_quietly S.close_directory)
-                       !live_directory));
+                  let replacement = Filename.concat safe_path "released" in
+                  if Sys.win32 then (
+                    (* NTFS sharing exclusion pins the created name while the
+                       handle is live; POSIX handles never pin a name. *)
+                    let replacement_blocked =
+                      try
+                        Sys.rename requested replacement;
+                        false
+                      with Sys_error _ | Unix.Unix_error _ -> true
+                    in
+                    Alcotest.(check bool)
+                      "live materialized root refuses replacement" true
+                      replacement_blocked;
+                    expect_cleanup_complete "materialized root close"
+                      (S.close_directory directory);
+                    live_directory := None;
+                    rename "rename materialized root after release" requested
+                      replacement)
+                  else (
+                    rename "rename live materialized root" requested replacement;
+                    (match
+                       S.create_file directory
+                         (native_name "post-rename.marker")
+                         ~permissions:C.Permissions.owner_read_write
+                         ~contents:"live"
+                     with
+                    | S.Created file ->
+                        close_quietly S.close_file file;
+                        Alcotest.(check bool)
+                          "renamed root capability stays live" true
+                          (Sys.file_exists
+                             (Filename.concat replacement "post-rename.marker"))
+                    | S.Not_created error -> fail_error error
+                    | S.Creation_incomplete { residual; failure } ->
+                        (match residual with
+                        | S.Captured file -> close_quietly S.close_file file
+                        | S.Uncaptured _ -> ());
+                        fail_error (C.issue_error failure.primary));
+                    expect_cleanup_complete "materialized root close"
+                      (S.close_directory directory);
+                    live_directory := None))
+                ~finally:(fun () ->
+                  Option.iter (close_quietly S.close_directory) !live_directory));
           match
             S.materialize witness
               ~permissions:C.Permissions.owner_private_directory
@@ -528,296 +546,268 @@ let test_materialization_missing_sibling_proof () =
       | Ok _ ->
           Alcotest.fail
             "missing sibling was promoted to a generic path relationship");
-      if not Sys.win32 then (
+      let witness =
         match S.establish_separation ~forbidden ~candidate with
-        | Ok witness ->
-            close_quietly S.close_separation witness;
-            Alcotest.fail "POSIX claimed exclusive sibling-create proof"
+        | Ok witness -> witness
         | Error failure ->
             close_quietly S.close_probe candidate;
             close_quietly S.close_probe forbidden;
-            Alcotest.(check bool)
-              "POSIX sibling proof is unsupported" true
-              ((C.issue_error failure.primary).class_ = C.Unsupported);
-            Alcotest.(check bool)
-              "POSIX sibling path is unchanged" false
-              (Sys.file_exists cache_path))
-      else
-        let witness =
-          match S.establish_separation ~forbidden ~candidate with
-          | Ok witness -> witness
-          | Error failure ->
-              close_quietly S.close_probe candidate;
-              close_quietly S.close_probe forbidden;
-              fail_error (C.issue_error failure.primary)
-        in
-        Fun.protect
-          (fun () ->
-            match
-              S.materialize witness
-                ~permissions:C.Permissions.owner_private_directory
-            with
-            | S.Materialization_incomplete { failure; _ } ->
-                fail_error (C.issue_error failure.primary)
-            | S.Materialized { directory; created; advisories; _ } ->
-                Fun.protect
-                  (fun () ->
-                    (match created with
-                    | [ S.Creation_observed name ] ->
-                        Alcotest.(check bool)
-                          "sibling evidence names cache" true
-                          (S.Native_name.equal name (native_name "cache"))
-                    | _ ->
-                        Alcotest.fail
-                          "exclusive sibling creation lost exact evidence");
-                    Alcotest.(check int)
-                      "sibling witness cleanup is clean" 0
-                      (List.length advisories);
-                    Alcotest.(check bool)
-                      "missing sibling is created" true
-                      (Sys.file_exists cache_path);
-                    Alcotest.(check string)
-                      "workspace sibling remains unchanged" "unchanged"
-                      (read_file workspace_sentinel))
-                  ~finally:(fun () -> close_quietly S.close_directory directory))
-          ~finally:(fun () -> close_quietly S.close_separation witness);
-
-        let raced_path = Filename.concat root "raced-cache" in
-        let raced_forbidden = get_probe (S.probe_path workspace_path) in
-        let raced_candidate = get_probe (S.probe_path raced_path) in
-        let raced_witness =
+            fail_error (C.issue_error failure.primary)
+      in
+      Fun.protect
+        (fun () ->
           match
-            S.establish_separation ~forbidden:raced_forbidden
-              ~candidate:raced_candidate
+            S.materialize witness
+              ~permissions:C.Permissions.owner_private_directory
           with
-          | Ok witness -> witness
-          | Error failure ->
-              close_quietly S.close_probe raced_candidate;
-              close_quietly S.close_probe raced_forbidden;
+          | S.Materialization_incomplete { failure; _ } ->
               fail_error (C.issue_error failure.primary)
-        in
-        Fun.protect
-          (fun () ->
-            (try Unix.symlink ~to_dir:true workspace_path raced_path
-             with
-             | Unix.Unix_error ((Unix.EPERM | Unix.EACCES | Unix.ENOSYS), _, _)
-             ->
-               Alcotest.skip ());
-            match
-              S.materialize raced_witness
-                ~permissions:C.Permissions.owner_private_directory
-            with
-            | S.Materialized materialized ->
-                close_quietly S.close_directory materialized.directory;
-                Alcotest.fail "exclusive sibling proof joined a raced reparse"
-            | S.Materialization_incomplete { created; failure } ->
-                Alcotest.(check int)
-                  "raced sibling commits nothing" 0 (List.length created);
-                Alcotest.(check bool)
-                  "raced sibling collision is exact" true
-                  ((C.issue_error failure.primary).class_ = C.Already_exists);
-                Alcotest.(check string)
-                  "raced workspace remains unchanged" "unchanged"
-                  (read_file workspace_sentinel))
-          ~finally:(fun () -> close_quietly S.close_separation raced_witness))
+          | S.Materialized { directory; created; advisories; _ } ->
+              Fun.protect
+                (fun () ->
+                  (match created with
+                  | [ S.Creation_observed name ] ->
+                      Alcotest.(check bool)
+                        "sibling evidence names cache" true
+                        (S.Native_name.equal name (native_name "cache"))
+                  | _ ->
+                      Alcotest.fail
+                        "exclusive sibling creation lost exact evidence");
+                  Alcotest.(check int)
+                    "sibling witness cleanup is clean" 0
+                    (List.length advisories);
+                  Alcotest.(check bool)
+                    "missing sibling is created" true
+                    (Sys.file_exists cache_path);
+                  Alcotest.(check string)
+                    "workspace sibling remains unchanged" "unchanged"
+                    (read_file workspace_sentinel))
+                ~finally:(fun () -> close_quietly S.close_directory directory))
+        ~finally:(fun () -> close_quietly S.close_separation witness);
+
+      let raced_path = Filename.concat root "raced-cache" in
+      let raced_forbidden = get_probe (S.probe_path workspace_path) in
+      let raced_candidate = get_probe (S.probe_path raced_path) in
+      let raced_witness =
+        match
+          S.establish_separation ~forbidden:raced_forbidden
+            ~candidate:raced_candidate
+        with
+        | Ok witness -> witness
+        | Error failure ->
+            close_quietly S.close_probe raced_candidate;
+            close_quietly S.close_probe raced_forbidden;
+            fail_error (C.issue_error failure.primary)
+      in
+      Fun.protect
+        (fun () ->
+          (try Unix.symlink ~to_dir:true workspace_path raced_path
+           with
+           | Unix.Unix_error ((Unix.EPERM | Unix.EACCES | Unix.ENOSYS), _, _) ->
+             Alcotest.skip ());
+          match
+            S.materialize raced_witness
+              ~permissions:C.Permissions.owner_private_directory
+          with
+          | S.Materialized materialized ->
+              close_quietly S.close_directory materialized.directory;
+              Alcotest.fail "exclusive sibling proof joined a raced reparse"
+          | S.Materialization_incomplete { created; failure } ->
+              Alcotest.(check int)
+                "raced sibling commits nothing" 0 (List.length created);
+              Alcotest.(check bool)
+                "raced sibling collision is exact" true
+                ((C.issue_error failure.primary).class_ = C.Already_exists);
+              Alcotest.(check string)
+                "raced workspace remains unchanged" "unchanged"
+                (read_file workspace_sentinel))
+        ~finally:(fun () -> close_quietly S.close_separation raced_witness))
 
 let test_materialization_rebinding_and_collision () =
-  if not Sys.win32 then Alcotest.skip ()
-  else
-    with_temp_directory (fun root ->
-        let workspace_path = Filename.concat root "workspace" in
-        let workspace_sentinel = Filename.concat workspace_path "sentinel" in
-        let safe_path = Filename.concat root "safe" in
-        let moved_safe_path = Filename.concat root "captured-safe" in
-        Unix.mkdir workspace_path 0o700;
-        Unix.mkdir safe_path 0o700;
-        write_file workspace_sentinel "unchanged";
-        let requested = Filename.concat safe_path "cache" in
-        let witness =
-          separated_candidate ~forbidden_path:workspace_path requested
-        in
-        Fun.protect
-          (fun () ->
-            rename "move probed materialization parent" safe_path
-              moved_safe_path;
-            (try Unix.symlink ~to_dir:true workspace_path safe_path
-             with
-             | Unix.Unix_error ((Unix.EPERM | Unix.EACCES | Unix.ENOSYS), _, _)
-             ->
-               Alcotest.skip ());
-            match
-              S.materialize witness
-                ~permissions:C.Permissions.owner_private_directory
-            with
-            | S.Materialization_incomplete { failure; _ } ->
-                fail_error (C.issue_error failure.primary)
-            | S.Materialized { directory; created; _ } ->
-                Fun.protect
-                  (fun () ->
-                    (match created with
-                    | [ S.Creation_observed name ] ->
-                        Alcotest.(check bool)
-                          "rebinding evidence names the leaf" true
-                          (S.Native_name.equal name (native_name "cache"))
-                    | _ ->
-                        Alcotest.fail
-                          "rebinding materialization lost exact evidence");
-                    Alcotest.(check bool)
-                      "creation follows captured parent" true
-                      (Sys.file_exists
-                         (Filename.concat moved_safe_path "cache"));
-                    Alcotest.(check bool)
-                      "replacement reparse is not traversed" false
-                      (Sys.file_exists (Filename.concat workspace_path "cache"));
-                    Alcotest.(check string)
-                      "forbidden workspace remains unchanged" "unchanged"
-                      (read_file workspace_sentinel))
-                  ~finally:(fun () -> close_quietly S.close_directory directory))
-          ~finally:(fun () -> close_quietly S.close_separation witness);
+  with_temp_directory (fun root ->
+      let workspace_path = Filename.concat root "workspace" in
+      let workspace_sentinel = Filename.concat workspace_path "sentinel" in
+      let safe_path = Filename.concat root "safe" in
+      let moved_safe_path = Filename.concat root "captured-safe" in
+      Unix.mkdir workspace_path 0o700;
+      Unix.mkdir safe_path 0o700;
+      write_file workspace_sentinel "unchanged";
+      let requested = Filename.concat safe_path "cache" in
+      let witness =
+        separated_candidate ~forbidden_path:workspace_path requested
+      in
+      Fun.protect
+        (fun () ->
+          rename "move probed materialization parent" safe_path moved_safe_path;
+          (try Unix.symlink ~to_dir:true workspace_path safe_path
+           with
+           | Unix.Unix_error ((Unix.EPERM | Unix.EACCES | Unix.ENOSYS), _, _) ->
+             Alcotest.skip ());
+          match
+            S.materialize witness
+              ~permissions:C.Permissions.owner_private_directory
+          with
+          | S.Materialization_incomplete { failure; _ } ->
+              fail_error (C.issue_error failure.primary)
+          | S.Materialized { directory; created; _ } ->
+              Fun.protect
+                (fun () ->
+                  (match created with
+                  | [ S.Creation_observed name ] ->
+                      Alcotest.(check bool)
+                        "rebinding evidence names the leaf" true
+                        (S.Native_name.equal name (native_name "cache"))
+                  | _ ->
+                      Alcotest.fail
+                        "rebinding materialization lost exact evidence");
+                  Alcotest.(check bool)
+                    "creation follows captured parent" true
+                    (Sys.file_exists (Filename.concat moved_safe_path "cache"));
+                  Alcotest.(check bool)
+                    "replacement reparse is not traversed" false
+                    (Sys.file_exists (Filename.concat workspace_path "cache"));
+                  Alcotest.(check string)
+                    "forbidden workspace remains unchanged" "unchanged"
+                    (read_file workspace_sentinel))
+                ~finally:(fun () -> close_quietly S.close_directory directory))
+        ~finally:(fun () -> close_quietly S.close_separation witness);
 
-        let collision_parent = Filename.concat root "collision-parent" in
-        Unix.mkdir collision_parent 0o700;
-        let collision_path = Filename.concat collision_parent "cache" in
-        let collision_witness =
-          separated_candidate ~forbidden_path:workspace_path collision_path
-        in
-        Fun.protect
-          (fun () ->
-            Unix.symlink ~to_dir:true workspace_path collision_path;
-            match
-              S.materialize collision_witness
-                ~permissions:C.Permissions.owner_private_directory
-            with
-            | S.Materialized materialized ->
-                close_quietly S.close_directory materialized.directory;
-                Alcotest.fail "materialization joined a colliding reparse"
-            | S.Materialization_incomplete { created; failure } ->
-                Alcotest.(check int)
-                  "collision commits nothing" 0 (List.length created);
-                Alcotest.(check bool)
-                  "collision is exact" true
-                  ((C.issue_error failure.primary).class_ = C.Already_exists);
-                Alcotest.(check string)
-                  "collision target remains unchanged" "unchanged"
-                  (read_file workspace_sentinel))
-          ~finally:(fun () ->
-            close_quietly S.close_separation collision_witness);
+      let collision_parent = Filename.concat root "collision-parent" in
+      Unix.mkdir collision_parent 0o700;
+      let collision_path = Filename.concat collision_parent "cache" in
+      let collision_witness =
+        separated_candidate ~forbidden_path:workspace_path collision_path
+      in
+      Fun.protect
+        (fun () ->
+          Unix.symlink ~to_dir:true workspace_path collision_path;
+          match
+            S.materialize collision_witness
+              ~permissions:C.Permissions.owner_private_directory
+          with
+          | S.Materialized materialized ->
+              close_quietly S.close_directory materialized.directory;
+              Alcotest.fail "materialization joined a colliding reparse"
+          | S.Materialization_incomplete { created; failure } ->
+              Alcotest.(check int)
+                "collision commits nothing" 0 (List.length created);
+              Alcotest.(check bool)
+                "collision is exact" true
+                ((C.issue_error failure.primary).class_ = C.Already_exists);
+              Alcotest.(check string)
+                "collision target remains unchanged" "unchanged"
+                (read_file workspace_sentinel))
+        ~finally:(fun () -> close_quietly S.close_separation collision_witness);
 
-        let multi_parent = Filename.concat root "multi-parent" in
-        Unix.mkdir multi_parent 0o700;
-        let first = Filename.concat multi_parent "first" in
-        let multi_requested = Filename.concat first "second" in
-        let multi_witness =
-          separated_candidate ~forbidden_path:workspace_path multi_requested
-        in
-        Fun.protect
-          (fun () ->
-            match
-              S.materialize multi_witness
-                ~permissions:C.Permissions.owner_private_directory
-            with
-            | S.Materialized materialized ->
-                close_quietly S.close_directory materialized.directory;
-                Alcotest.fail "multi-component materialization was claimed"
-            | S.Materialization_incomplete { created; failure } ->
-                Alcotest.(check int)
-                  "multi-component path commits nothing" 0 (List.length created);
-                Alcotest.(check string)
-                  "bounded gap is explicit"
-                  "multi-component-materialization-unsupported"
-                  (C.issue_error failure.primary).native_code;
-                Alcotest.(check bool)
-                  "no partial prefix was created" false (Sys.file_exists first))
-          ~finally:(fun () -> close_quietly S.close_separation multi_witness))
+      let multi_parent = Filename.concat root "multi-parent" in
+      Unix.mkdir multi_parent 0o700;
+      let first = Filename.concat multi_parent "first" in
+      let multi_requested = Filename.concat first "second" in
+      let multi_witness =
+        separated_candidate ~forbidden_path:workspace_path multi_requested
+      in
+      Fun.protect
+        (fun () ->
+          match
+            S.materialize multi_witness
+              ~permissions:C.Permissions.owner_private_directory
+          with
+          | S.Materialized materialized ->
+              close_quietly S.close_directory materialized.directory;
+              Alcotest.fail "multi-component materialization was claimed"
+          | S.Materialization_incomplete { created; failure } ->
+              Alcotest.(check int)
+                "multi-component path commits nothing" 0 (List.length created);
+              Alcotest.(check string)
+                "bounded gap is explicit"
+                "multi-component-materialization-unsupported"
+                (C.issue_error failure.primary).native_code;
+              Alcotest.(check bool)
+                "no partial prefix was created" false (Sys.file_exists first))
+        ~finally:(fun () -> close_quietly S.close_separation multi_witness))
 
 let test_materialization_fault_evidence () =
-  if not Sys.win32 then Alcotest.skip ()
-  else
-    with_temp_directory (fun root ->
-        let forbidden_path = Filename.concat root "forbidden" in
-        let safe_path = Filename.concat root "safe" in
-        Unix.mkdir forbidden_path 0o700;
-        Unix.mkdir safe_path 0o700;
-        let run name =
-          let requested = Filename.concat safe_path name in
-          let witness = separated_candidate ~forbidden_path requested in
-          let outcome =
-            Fun.protect
-              (fun () ->
-                S.materialize witness
-                  ~permissions:C.Permissions.owner_private_directory)
-              ~finally:(fun () -> close_quietly S.close_separation witness)
-          in
-          (requested, outcome)
+  with_temp_directory (fun root ->
+      let forbidden_path = Filename.concat root "forbidden" in
+      let safe_path = Filename.concat root "safe" in
+      Unix.mkdir forbidden_path 0o700;
+      Unix.mkdir safe_path 0o700;
+      let run name =
+        let requested = Filename.concat safe_path name in
+        let witness = separated_candidate ~forbidden_path requested in
+        let outcome =
+          Fun.protect
+            (fun () ->
+              S.materialize witness
+                ~permissions:C.Permissions.owner_private_directory)
+            ~finally:(fun () -> close_quietly S.close_separation witness)
         in
-        let expect_uncertain expected = function
-          | [ S.Creation_may_have_committed name ] ->
-              Alcotest.(check bool)
-                "uncertain evidence names the attempted leaf" true
-                (S.Native_name.equal name (native_name expected))
-          | [ S.Creation_observed _ ] ->
-              Alcotest.fail "post-commit fault was reported fully observed"
-          | _ -> Alcotest.fail "post-commit evidence was lost"
-        in
-        Fun.protect
-          (fun () ->
-            inject_native_internal_fault create_before_commit_fault_site true
-              false;
-            let before_path, before = run "before" in
-            (match before with
-            | S.Materialized materialized ->
-                close_quietly S.close_directory materialized.directory;
-                Alcotest.fail "pre-commit fault was hidden"
-            | S.Materialization_incomplete { created; failure } ->
-                Alcotest.(check int)
-                  "pre-commit evidence is empty" 0 (List.length created);
-                Alcotest.(check string)
-                  "pre-commit failure is primary"
-                  "injected-create-before-commit"
-                  (C.issue_error failure.primary).native_code);
+        (requested, outcome)
+      in
+      let expect_uncertain expected = function
+        | [ S.Creation_may_have_committed name ] ->
             Alcotest.(check bool)
-              "pre-commit namespace is unchanged" false
-              (Sys.file_exists before_path);
+              "uncertain evidence names the attempted leaf" true
+              (S.Native_name.equal name (native_name expected))
+        | [ S.Creation_observed _ ] ->
+            Alcotest.fail "post-commit fault was reported fully observed"
+        | _ -> Alcotest.fail "post-commit evidence was lost"
+      in
+      Fun.protect
+        (fun () ->
+          inject_native_internal_fault create_before_commit_fault_site true
+            false;
+          let before_path, before = run "before" in
+          (match before with
+          | S.Materialized materialized ->
+              close_quietly S.close_directory materialized.directory;
+              Alcotest.fail "pre-commit fault was hidden"
+          | S.Materialization_incomplete { created; failure } ->
+              Alcotest.(check int)
+                "pre-commit evidence is empty" 0 (List.length created);
+              Alcotest.(check string)
+                "pre-commit failure is primary" "injected-create-before-commit"
+                (C.issue_error failure.primary).native_code);
+          Alcotest.(check bool)
+            "pre-commit namespace is unchanged" false
+            (Sys.file_exists before_path);
 
-            inject_native_internal_fault create_after_commit_fault_site true
-              false;
-            let after_path, after = run "after" in
-            (match after with
-            | S.Materialized materialized ->
-                close_quietly S.close_directory materialized.directory;
-                Alcotest.fail "post-commit fault was hidden"
-            | S.Materialization_incomplete { created; failure } ->
-                expect_uncertain "after" created;
-                Alcotest.(check string)
-                  "post-commit failure is primary"
-                  "injected-create-after-commit"
-                  (C.issue_error failure.primary).native_code;
-                Alcotest.(check int)
-                  "successful terminal close has no issue" 0
-                  (List.length failure.suppressed));
-            Alcotest.(check bool)
-              "post-commit residual is real" true
-              (Sys.file_exists after_path);
-            Unix.rmdir after_path;
+          inject_native_internal_fault create_after_commit_fault_site true false;
+          let after_path, after = run "after" in
+          (match after with
+          | S.Materialized materialized ->
+              close_quietly S.close_directory materialized.directory;
+              Alcotest.fail "post-commit fault was hidden"
+          | S.Materialization_incomplete { created; failure } ->
+              expect_uncertain "after" created;
+              Alcotest.(check string)
+                "post-commit failure is primary" "injected-create-after-commit"
+                (C.issue_error failure.primary).native_code;
+              Alcotest.(check int)
+                "successful terminal close has no issue" 0
+                (List.length failure.suppressed));
+          Alcotest.(check bool)
+            "post-commit residual is real" true
+            (Sys.file_exists after_path);
+          Unix.rmdir after_path;
 
-            inject_native_internal_fault create_after_commit_fault_site true
-              true;
-            let cleanup_path, cleanup = run "after-close-fault" in
-            (match cleanup with
-            | S.Materialized materialized ->
-                close_quietly S.close_directory materialized.directory;
-                Alcotest.fail "post-commit cleanup fault was hidden"
-            | S.Materialization_incomplete { created; failure } ->
-                expect_uncertain "after-close-fault" created;
-                check_action_then_cleanup
-                  ~label:"materialize action then terminal child cleanup"
-                  ~action_operation:C.Materialize
-                  ~cleanup_operation:C.Close_directory failure);
-            Alcotest.(check bool)
-              "cleanup-fault residual remains audit-only" true
-              (Sys.file_exists cleanup_path);
-            Unix.rmdir cleanup_path)
-          ~finally:reset_native_internal_fault)
+          inject_native_internal_fault create_after_commit_fault_site true true;
+          let cleanup_path, cleanup = run "after-close-fault" in
+          (match cleanup with
+          | S.Materialized materialized ->
+              close_quietly S.close_directory materialized.directory;
+              Alcotest.fail "post-commit cleanup fault was hidden"
+          | S.Materialization_incomplete { created; failure } ->
+              expect_uncertain "after-close-fault" created;
+              check_action_then_cleanup
+                ~label:"materialize action then terminal child cleanup"
+                ~action_operation:C.Materialize
+                ~cleanup_operation:C.Close_directory failure);
+          Alcotest.(check bool)
+            "cleanup-fault residual remains audit-only" true
+            (Sys.file_exists cleanup_path);
+          Unix.rmdir cleanup_path)
+        ~finally:reset_native_internal_fault)
 
 let test_owner_private_directory_creation_is_capability_relative () =
   with_temp_directory (fun root ->
@@ -853,70 +843,57 @@ let test_owner_private_directory_creation_is_capability_relative () =
       Fun.protect
         (fun () ->
           let child_name = native_name "snapshot-child" in
-          if not Sys.win32 then
+          rename "move captured temp parent" parent_path moved_parent_path;
+          (try Unix.symlink ~to_dir:true workspace_path parent_path
+           with
+           | Unix.Unix_error ((Unix.EPERM | Unix.EACCES | Unix.ENOSYS), _, _) ->
+             Alcotest.skip ());
+          let weak_name = native_name "weak-child" in
+          (match
+             S.create_directory parent weak_name
+               ~permissions:(permissions 0o750)
+           with
+          | S.Not_created error ->
+              Alcotest.(check bool)
+                "non-private policy rejected before commit" true
+                (error.class_ = C.Unsupported)
+          | S.Created child ->
+              close_quietly S.close_directory child;
+              Alcotest.fail "non-private Windows policy was accepted"
+          | S.Creation_incomplete _ ->
+              Alcotest.fail "policy rejection reported a possible commit");
+          Alcotest.(check bool)
+            "rejected policy creates no child" false
+            (Sys.file_exists (Filename.concat moved_parent_path "weak-child"));
+          let child =
             match
               S.create_directory parent child_name
                 ~permissions:C.Permissions.owner_private_directory
             with
-            | S.Not_created error ->
-                Alcotest.(check bool)
-                  "POSIX gap remains explicit" true
-                  (error.class_ = C.Unsupported)
-            | S.Created child ->
-                close_quietly S.close_directory child;
-                Alcotest.fail "POSIX claimed owner-private create authority"
-            | S.Creation_incomplete _ ->
-                Alcotest.fail "unsupported POSIX create reported a commit"
-          else (
-            rename "move captured temp parent" parent_path moved_parent_path;
-            (try Unix.symlink ~to_dir:true workspace_path parent_path
-             with
-             | Unix.Unix_error ((Unix.EPERM | Unix.EACCES | Unix.ENOSYS), _, _)
-             ->
-               Alcotest.skip ());
-            let weak_name = native_name "weak-child" in
-            (match
-               S.create_directory parent weak_name
-                 ~permissions:(permissions 0o750)
-             with
-            | S.Not_created error ->
-                Alcotest.(check bool)
-                  "non-private policy rejected before commit" true
-                  (error.class_ = C.Unsupported)
-            | S.Created child ->
-                close_quietly S.close_directory child;
-                Alcotest.fail "non-private Windows policy was accepted"
-            | S.Creation_incomplete _ ->
-                Alcotest.fail "policy rejection reported a possible commit");
-            Alcotest.(check bool)
-              "rejected policy creates no child" false
-              (Sys.file_exists (Filename.concat moved_parent_path "weak-child"));
-            let child =
-              match
-                S.create_directory parent child_name
-                  ~permissions:C.Permissions.owner_private_directory
-              with
-              | S.Created child -> child
-              | S.Not_created error -> fail_error error
-              | S.Creation_incomplete { failure; _ } ->
-                  fail_error (C.issue_error failure.primary)
-            in
-            let live_child = ref (Some child) in
-            Fun.protect
-              (fun () ->
-                let captured_child =
-                  Filename.concat moved_parent_path "snapshot-child"
-                in
-                let replacement =
-                  Filename.concat moved_parent_path "replacement"
-                in
-                Alcotest.(check bool)
-                  "create stays below captured parent" true
-                  (Sys.file_exists captured_child);
-                Alcotest.(check bool)
-                  "ambient reparse target is untouched" false
-                  (Sys.file_exists
-                     (Filename.concat workspace_path "snapshot-child"));
+            | S.Created child -> child
+            | S.Not_created error -> fail_error error
+            | S.Creation_incomplete { failure; _ } ->
+                fail_error (C.issue_error failure.primary)
+          in
+          let live_child = ref (Some child) in
+          Fun.protect
+            (fun () ->
+              let captured_child =
+                Filename.concat moved_parent_path "snapshot-child"
+              in
+              let replacement =
+                Filename.concat moved_parent_path "replacement"
+              in
+              Alcotest.(check bool)
+                "create stays below captured parent" true
+                (Sys.file_exists captured_child);
+              Alcotest.(check bool)
+                "ambient reparse target is untouched" false
+                (Sys.file_exists
+                   (Filename.concat workspace_path "snapshot-child"));
+              if Sys.win32 then (
+                (* NTFS delete-sharing denial pins the created name while the
+                   handle is live; POSIX handles never pin a name. *)
                 let replacement_blocked =
                   try
                     Sys.rename captured_child replacement;
@@ -930,111 +907,111 @@ let test_owner_private_directory_creation_is_capability_relative () =
                   (S.close_directory child);
                 live_child := None;
                 rename "rename child after capability release" captured_child
-                  replacement;
-                let link_name = "raced-link" in
-                let link_path = Filename.concat moved_parent_path link_name in
-                Unix.symlink ~to_dir:true workspace_path link_path;
-                (match
-                   S.create_directory parent (native_name link_name)
-                     ~permissions:C.Permissions.owner_private_directory
-                 with
-                | S.Not_created error ->
-                    Alcotest.(check bool)
-                      "winning reparse entry is never opened" true
-                      (error.class_ = C.Already_exists)
-                | S.Created raced ->
-                    close_quietly S.close_directory raced;
-                    Alcotest.fail "create traversed or replaced a raced link"
-                | S.Creation_incomplete _ ->
-                    Alcotest.fail "name collision reported possible commit");
-                Alcotest.(check bool)
-                  "raced link target remains untouched" false
-                  (Sys.file_exists (Filename.concat workspace_path link_name)))
-              ~finally:(fun () ->
-                Option.iter (close_quietly S.close_directory) !live_child)))
+                  replacement)
+              else (
+                rename "rename live created child" captured_child replacement;
+                expect_cleanup_complete "created directory close"
+                  (S.close_directory child);
+                live_child := None);
+              let link_name = "raced-link" in
+              let link_path = Filename.concat moved_parent_path link_name in
+              Unix.symlink ~to_dir:true workspace_path link_path;
+              (match
+                 S.create_directory parent (native_name link_name)
+                   ~permissions:C.Permissions.owner_private_directory
+               with
+              | S.Not_created error ->
+                  Alcotest.(check bool)
+                    "winning reparse entry is never opened" true
+                    (error.class_ = C.Already_exists)
+              | S.Created raced ->
+                  close_quietly S.close_directory raced;
+                  Alcotest.fail "create traversed or replaced a raced link"
+              | S.Creation_incomplete _ ->
+                  Alcotest.fail "name collision reported possible commit");
+              Alcotest.(check bool)
+                "raced link target remains untouched" false
+                (Sys.file_exists (Filename.concat workspace_path link_name)))
+            ~finally:(fun () ->
+              Option.iter (close_quietly S.close_directory) !live_child))
         ~finally:(fun () -> close_quietly S.close_directory parent))
 
 let test_owner_private_directory_creation_fault_evidence () =
-  if not Sys.win32 then Alcotest.skip ()
-  else
-    with_temp_directory (fun root ->
-        let parent = existing_directory root in
-        let create name =
-          S.create_directory parent (native_name name)
-            ~permissions:C.Permissions.owner_private_directory
-        in
-        let check_residual label expected_name = function
-          | S.Uncaptured (S.Creation_may_have_committed name) ->
-              Alcotest.(check bool)
-                label true
-                (S.Native_name.equal name (native_name expected_name))
-          | S.Uncaptured (S.Creation_observed _) ->
-              Alcotest.failf "%s: uncertain commit was reported observed" label
-          | S.Captured directory ->
-              close_quietly S.close_directory directory;
-              Alcotest.failf "%s: terminal native cleanup returned live cap"
-                label
-        in
-        Fun.protect
-          (fun () ->
-            inject_native_internal_fault create_before_commit_fault_site true
-              false;
-            (match create "before" with
-            | S.Not_created error ->
-                Alcotest.(check string)
-                  "pre-commit fault evidence" "injected-create-before-commit"
-                  error.native_code
-            | S.Created child ->
-                close_quietly S.close_directory child;
-                Alcotest.fail "pre-commit fault created a directory"
-            | S.Creation_incomplete _ ->
-                Alcotest.fail "pre-commit fault became commit-uncertain");
+  with_temp_directory (fun root ->
+      let parent = existing_directory root in
+      let create name =
+        S.create_directory parent (native_name name)
+          ~permissions:C.Permissions.owner_private_directory
+      in
+      let check_residual label expected_name = function
+        | S.Uncaptured (S.Creation_may_have_committed name) ->
             Alcotest.(check bool)
-              "pre-commit namespace unchanged" false
-              (Sys.file_exists (Filename.concat root "before"));
+              label true
+              (S.Native_name.equal name (native_name expected_name))
+        | S.Uncaptured (S.Creation_observed _) ->
+            Alcotest.failf "%s: uncertain commit was reported observed" label
+        | S.Captured directory ->
+            close_quietly S.close_directory directory;
+            Alcotest.failf "%s: terminal native cleanup returned live cap" label
+      in
+      Fun.protect
+        (fun () ->
+          inject_native_internal_fault create_before_commit_fault_site true
+            false;
+          (match create "before" with
+          | S.Not_created error ->
+              Alcotest.(check string)
+                "pre-commit fault evidence" "injected-create-before-commit"
+                error.native_code
+          | S.Created child ->
+              close_quietly S.close_directory child;
+              Alcotest.fail "pre-commit fault created a directory"
+          | S.Creation_incomplete _ ->
+              Alcotest.fail "pre-commit fault became commit-uncertain");
+          Alcotest.(check bool)
+            "pre-commit namespace unchanged" false
+            (Sys.file_exists (Filename.concat root "before"));
 
-            inject_native_internal_fault create_after_commit_fault_site true
-              false;
-            (match create "after" with
-            | S.Creation_incomplete { residual; failure } ->
-                check_residual "post-commit residual" "after" residual;
-                Alcotest.(check string)
-                  "post-commit action evidence" "injected-create-after-commit"
-                  (C.issue_error failure.primary).native_code;
-                Alcotest.(check int)
-                  "successful terminal close has no cleanup issue" 0
-                  (List.length failure.suppressed)
-            | S.Not_created _ ->
-                Alcotest.fail "post-commit fault was reported not-created"
-            | S.Created child ->
-                close_quietly S.close_directory child;
-                Alcotest.fail "post-commit fault was hidden");
-            Alcotest.(check bool)
-              "post-commit namespace evidence is real" true
-              (Sys.file_exists (Filename.concat root "after"));
-            Unix.rmdir (Filename.concat root "after");
+          inject_native_internal_fault create_after_commit_fault_site true false;
+          (match create "after" with
+          | S.Creation_incomplete { residual; failure } ->
+              check_residual "post-commit residual" "after" residual;
+              Alcotest.(check string)
+                "post-commit action evidence" "injected-create-after-commit"
+                (C.issue_error failure.primary).native_code;
+              Alcotest.(check int)
+                "successful terminal close has no cleanup issue" 0
+                (List.length failure.suppressed)
+          | S.Not_created _ ->
+              Alcotest.fail "post-commit fault was reported not-created"
+          | S.Created child ->
+              close_quietly S.close_directory child;
+              Alcotest.fail "post-commit fault was hidden");
+          Alcotest.(check bool)
+            "post-commit namespace evidence is real" true
+            (Sys.file_exists (Filename.concat root "after"));
+          Unix.rmdir (Filename.concat root "after");
 
-            inject_native_internal_fault create_after_commit_fault_site true
-              true;
-            (match create "after-close-fault" with
-            | S.Creation_incomplete { residual; failure } ->
-                check_residual "cleanup-fault residual" "after-close-fault"
-                  residual;
-                check_action_then_cleanup ~label:"post-create action plus close"
-                  ~action_operation:C.Create_directory
-                  ~cleanup_operation:C.Close_directory failure
-            | S.Not_created _ ->
-                Alcotest.fail "post-create cleanup fault lost commit evidence"
-            | S.Created child ->
-                close_quietly S.close_directory child;
-                Alcotest.fail "post-create cleanup fault was hidden");
-            Alcotest.(check bool)
-              "cleanup fault retains namespace uncertainty" true
-              (Sys.file_exists (Filename.concat root "after-close-fault"));
-            Unix.rmdir (Filename.concat root "after-close-fault"))
-          ~finally:(fun () ->
-            reset_native_internal_fault ();
-            close_quietly S.close_directory parent))
+          inject_native_internal_fault create_after_commit_fault_site true true;
+          (match create "after-close-fault" with
+          | S.Creation_incomplete { residual; failure } ->
+              check_residual "cleanup-fault residual" "after-close-fault"
+                residual;
+              check_action_then_cleanup ~label:"post-create action plus close"
+                ~action_operation:C.Create_directory
+                ~cleanup_operation:C.Close_directory failure
+          | S.Not_created _ ->
+              Alcotest.fail "post-create cleanup fault lost commit evidence"
+          | S.Created child ->
+              close_quietly S.close_directory child;
+              Alcotest.fail "post-create cleanup fault was hidden");
+          Alcotest.(check bool)
+            "cleanup fault retains namespace uncertainty" true
+            (Sys.file_exists (Filename.concat root "after-close-fault"));
+          Unix.rmdir (Filename.concat root "after-close-fault"))
+        ~finally:(fun () ->
+          reset_native_internal_fault ();
+          close_quietly S.close_directory parent))
 
 let test_owner_private_file_creation_is_capability_relative () =
   with_temp_directory (fun root ->
@@ -1338,288 +1315,292 @@ let test_captured_handle_deletion_and_fault_evidence () =
         (fun () ->
           write_file (file_path "ordinary") "ordinary";
           if not Sys.win32 then (
-            (match
-               S.open_file_for_delete_no_follow parent (native_name "ordinary")
-             with
-            | Error failure ->
-                Alcotest.(check bool)
-                  "POSIX delete capture is explicit" true
-                  ((C.issue_error failure.primary).class_ = C.Unsupported)
-            | Ok file ->
-                close_quietly S.close_file file;
-                Alcotest.fail "POSIX exposed an unproven delete handle");
-            Unix.mkdir (file_path "empty") 0o700;
-            (match
-               S.open_directory_for_delete_no_follow parent
-                 (native_name "empty")
-             with
-            | Error failure ->
-                Alcotest.(check bool)
-                  "POSIX directory delete capture is explicit" true
-                  ((C.issue_error failure.primary).class_ = C.Unsupported)
-            | Ok directory ->
-                close_quietly S.close_directory directory;
-                Alcotest.fail
-                  "POSIX exposed an unproven directory delete handle");
-            match
-              S.create_file parent (native_name "created")
-                ~permissions:C.Permissions.owner_read_write ~contents:"owned"
-            with
-            | S.Created file ->
-                (match
-                   S.unlink_captured_file_if_identity ~parent file
-                     ~expected:(S.file_identity file)
-                 with
-                | C.Deletion_not_committed error ->
-                    Alcotest.(check bool)
-                      "POSIX raw deletion is explicit" true
-                      (error.class_ = C.Unsupported)
-                | C.Deletion_complete _ | C.Deletion_incomplete _ ->
-                    Alcotest.fail "POSIX emulated captured deletion");
-                Alcotest.(check string)
-                  "unsupported deletion leaves capability live" "owned"
-                  (get_ok (S.read_captured file ~limit:64L)).contents;
-                close_quietly S.close_file file
-            | S.Not_created error -> fail_error error
-            | S.Creation_incomplete { failure; _ } ->
-                fail_error (C.issue_error failure.primary))
-          else
-            let ordinary =
-              get_failure
-                (S.open_file_no_follow parent (native_name "ordinary"))
-            in
+            (* Delete capture requires the parent's owner-exclusive envelope; a
+               parent open to other principals fails closed. *)
+            Unix.mkdir (file_path "shared-parent") 0o755;
+            write_file (Filename.concat (file_path "shared-parent") "loose") "x";
+            let shared = existing_directory (file_path "shared-parent") in
             Fun.protect
               (fun () ->
+                (match
+                   S.open_file_for_delete_no_follow shared (native_name "loose")
+                 with
+                | Error failure ->
+                    Alcotest.(check string)
+                      "unproven envelope fails closed"
+                      "owner-exclusive-parent-unproven"
+                      (C.issue_error failure.primary).native_code
+                | Ok file ->
+                    close_quietly S.close_file file;
+                    Alcotest.fail "delete capture claimed an unproven envelope");
                 match
-                  S.unlink_captured_file_if_identity ~parent ordinary
-                    ~expected:(S.file_identity ordinary)
+                  S.open_directory_for_delete_no_follow shared
+                    (native_name "loose")
                 with
-                | C.Deletion_not_committed error ->
+                | Error failure ->
                     Alcotest.(check string)
-                      "ordinary handle has no deletion authority"
-                      "file-delete-authority-not-captured" error.native_code;
-                    Alcotest.(check string)
-                      "ordinary handle remains live" "ordinary"
-                      (get_ok (S.read_captured ordinary ~limit:64L)).contents
-                | C.Deletion_complete _ | C.Deletion_incomplete _ ->
-                    Alcotest.fail "ordinary file handle authorized deletion")
-              ~finally:(fun () -> close_quietly S.close_file ordinary);
+                      "unproven directory envelope fails closed"
+                      "owner-exclusive-parent-unproven"
+                      (C.issue_error failure.primary).native_code
+                | Ok directory ->
+                    close_quietly S.close_directory directory;
+                    Alcotest.fail
+                      "directory delete capture claimed an unproven envelope")
+              ~finally:(fun () -> close_quietly S.close_directory shared));
+          let ordinary =
+            get_failure (S.open_file_no_follow parent (native_name "ordinary"))
+          in
+          Fun.protect
+            (fun () ->
+              match
+                S.unlink_captured_file_if_identity ~parent ordinary
+                  ~expected:(S.file_identity ordinary)
+              with
+              | C.Deletion_not_committed error ->
+                  Alcotest.(check string)
+                    "ordinary handle has no deletion authority"
+                    "file-delete-authority-not-captured" error.native_code;
+                  Alcotest.(check string)
+                    "ordinary handle remains live" "ordinary"
+                    (get_ok (S.read_captured ordinary ~limit:64L)).contents
+              | C.Deletion_complete _ | C.Deletion_incomplete _ ->
+                  Alcotest.fail "ordinary file handle authorized deletion")
+            ~finally:(fun () -> close_quietly S.close_file ordinary);
 
-            let link_path = file_path "delete-link" in
-            (try
-               Unix.symlink ~to_dir:false (file_path "ordinary") link_path;
-               match
-                 S.open_file_for_delete_no_follow parent
-                   (native_name "delete-link")
-               with
-               | Error failure ->
-                   Alcotest.(check bool)
-                     "delete capture rejects reparse" true
-                     ((C.issue_error failure.primary).class_ = C.Link_like)
-               | Ok file ->
-                   close_quietly S.close_file file;
-                   Alcotest.fail "delete capture followed a reparse point"
+          let link_path = file_path "delete-link" in
+          (try
+             Unix.symlink ~to_dir:false (file_path "ordinary") link_path;
+             match
+               S.open_file_for_delete_no_follow parent
+                 (native_name "delete-link")
              with
-             | Unix.Unix_error ((Unix.EPERM | Unix.EACCES | Unix.ENOSYS), _, _)
-             ->
-               ());
+             | Error failure ->
+                 Alcotest.(check bool)
+                   "delete capture rejects reparse" true
+                   ((C.issue_error failure.primary).class_ = C.Link_like)
+             | Ok file ->
+                 close_quietly S.close_file file;
+                 Alcotest.fail "delete capture followed a reparse point"
+           with
+           | Unix.Unix_error ((Unix.EPERM | Unix.EACCES | Unix.ENOSYS), _, _) ->
+             ());
 
-            write_file (file_path "target") "owned";
-            with_delete_file "target" (fun file ->
-                let expected = S.file_identity file in
-                (match
-                   S.unlink_captured_file_if_identity ~parent:other file
-                     ~expected
-                 with
-                | C.Deletion_not_committed error ->
-                    Alcotest.(check string)
-                      "wrong parent is pre-commit"
-                      "captured-file-parent-identity-mismatch" error.native_code
-                | C.Deletion_complete _ | C.Deletion_incomplete _ ->
-                    Alcotest.fail "wrong parent authorized deletion");
-                (match
-                   S.unlink_captured_file_if_identity ~parent file
-                     ~expected:(S.dir_identity other)
-                 with
-                | C.Deletion_complete C.Identity_changed -> ()
-                | C.Deletion_not_committed _ | C.Deletion_complete _
-                | C.Deletion_incomplete _ ->
-                    Alcotest.fail "wrong target identity was not refused");
+          write_file (file_path "target") "owned";
+          with_delete_file "target" (fun file ->
+              let expected = S.file_identity file in
+              (match
+                 S.unlink_captured_file_if_identity ~parent:other file ~expected
+               with
+              | C.Deletion_not_committed error ->
+                  Alcotest.(check string)
+                    "wrong parent is pre-commit"
+                    "captured-file-parent-identity-mismatch" error.native_code
+              | C.Deletion_complete _ | C.Deletion_incomplete _ ->
+                  Alcotest.fail "wrong parent authorized deletion");
+              (match
+                 S.unlink_captured_file_if_identity ~parent file
+                   ~expected:(S.dir_identity other)
+               with
+              | C.Deletion_complete C.Identity_changed -> ()
+              | C.Deletion_not_committed _ | C.Deletion_complete _
+              | C.Deletion_incomplete _ ->
+                  Alcotest.fail "wrong target identity was not refused");
+              if Sys.win32 then
+                (* NTFS delete-sharing denial pins the captured name while the
+                   handle is live. *)
                 Alcotest.(check bool)
                   "live delete handle rejects namespace replacement" true
                   (try
                      Sys.rename (file_path "target") (file_path "moved-target");
                      false
-                   with Sys_error _ | Unix.Unix_error _ -> true);
-                Alcotest.(check string)
-                  "refusals leave target live" "owned"
-                  (get_ok (S.read_captured file ~limit:64L)).contents;
-                expect_unlinked "captured file deletion"
-                  (S.unlink_captured_file_if_identity ~parent file ~expected);
-                Alcotest.(check bool)
-                  "captured file namespace released" false
-                  (Sys.file_exists (file_path "target"));
-                expect_error C.Closed_capability
-                  (S.read_captured file ~limit:64L));
-
-            write_file (file_path "before") "retryable";
-            with_delete_file "before" (fun file ->
-                inject_native_internal_fault delete_before_commit_fault_site
-                  true false;
+                   with Sys_error _ | Unix.Unix_error _ -> true)
+              else (
+                (* POSIX capture never pins the name; a rebound capture name is
+                   detected and refused, never deleted. *)
+                Sys.rename (file_path "target") (file_path "moved-target");
                 (match
-                   S.unlink_captured_file_if_identity ~parent file
-                     ~expected:(S.file_identity file)
+                   S.unlink_captured_file_if_identity ~parent file ~expected
                  with
-                | C.Deletion_not_committed error ->
-                    Alcotest.(check string)
-                      "delete pre-commit fault is exact"
-                      "injected-delete-before-commit" error.native_code
-                | C.Deletion_complete _ | C.Deletion_incomplete _ ->
-                    Alcotest.fail
-                      "delete pre-commit fault crossed commit boundary");
-                Alcotest.(check string)
-                  "pre-commit delete target remains live" "retryable"
-                  (get_ok (S.read_captured file ~limit:64L)).contents;
-                expect_unlinked "retried captured file deletion"
-                  (S.unlink_captured_file_if_identity ~parent file
-                     ~expected:(S.file_identity file)));
-
-            write_file (file_path "after") "committed";
-            with_delete_file "after" (fun file ->
-                inject_native_internal_fault delete_after_commit_fault_site true
-                  false;
-                match
-                  S.unlink_captured_file_if_identity ~parent file
-                    ~expected:(S.file_identity file)
-                with
-                | C.Deletion_incomplete
-                    {
-                      progress =
-                        {
-                          local_handle_state = C.Closed;
-                          namespace_released = true;
-                        };
-                      failure =
-                        { primary = C.Operation_error action; suppressed = [] };
-                    } ->
-                    Alcotest.(check string)
-                      "delete post-commit action is exact"
-                      "injected-delete-after-commit" action.native_code;
-                    Alcotest.(check bool)
-                      "post-commit file namespace released" false
-                      (Sys.file_exists (file_path "after"));
-                    expect_error C.Closed_capability
-                      (S.read_captured file ~limit:64L)
+                | C.Deletion_complete C.Identity_changed -> ()
                 | C.Deletion_not_committed _ | C.Deletion_complete _
                 | C.Deletion_incomplete _ ->
-                    Alcotest.fail "delete post-commit evidence was not exact");
+                    Alcotest.fail "renamed-away capture name was not refused");
+                Alcotest.(check bool)
+                  "refused deletion leaves the moved entry" true
+                  (Sys.file_exists (file_path "moved-target"));
+                Sys.rename (file_path "moved-target") (file_path "target"));
+              Alcotest.(check string)
+                "refusals leave target live" "owned"
+                (get_ok (S.read_captured file ~limit:64L)).contents;
+              expect_unlinked "captured file deletion"
+                (S.unlink_captured_file_if_identity ~parent file ~expected);
+              Alcotest.(check bool)
+                "captured file namespace released" false
+                (Sys.file_exists (file_path "target"));
+              expect_error C.Closed_capability (S.read_captured file ~limit:64L));
 
-            write_file (file_path "double-fault") "committed";
-            with_delete_file "double-fault" (fun file ->
-                inject_native_internal_fault delete_after_commit_fault_site true
-                  true;
-                match
-                  S.unlink_captured_file_if_identity ~parent file
-                    ~expected:(S.file_identity file)
-                with
-                | C.Deletion_incomplete
-                    {
-                      progress =
-                        {
-                          local_handle_state = C.Invalidated_unknown;
-                          namespace_released = false;
-                        };
-                      failure =
-                        {
-                          primary = C.Operation_error action;
-                          suppressed =
-                            [
-                              C.Cleanup_error
-                                { primary = cleanup; suppressed = [] };
-                            ];
-                        };
-                    } ->
-                    Alcotest.(check bool)
-                      "delete action then cleanup stay ordered" true
-                      (action.native_code = "injected-delete-after-commit"
-                      && cleanup.error.native_code
-                         = "injected-internal-close-failure"
-                      && cleanup.local_handle_state = C.Invalidated_unknown
-                      && not cleanup.namespace_released)
-                | C.Deletion_not_committed _ | C.Deletion_complete _
-                | C.Deletion_incomplete _ ->
-                    Alcotest.fail
-                      "delete action and cleanup evidence was flattened");
+          write_file (file_path "before") "retryable";
+          with_delete_file "before" (fun file ->
+              inject_native_internal_fault delete_before_commit_fault_site true
+                false;
+              (match
+                 S.unlink_captured_file_if_identity ~parent file
+                   ~expected:(S.file_identity file)
+               with
+              | C.Deletion_not_committed error ->
+                  Alcotest.(check string)
+                    "delete pre-commit fault is exact"
+                    "injected-delete-before-commit" error.native_code
+              | C.Deletion_complete _ | C.Deletion_incomplete _ ->
+                  Alcotest.fail
+                    "delete pre-commit fault crossed commit boundary");
+              Alcotest.(check string)
+                "pre-commit delete target remains live" "retryable"
+                (get_ok (S.read_captured file ~limit:64L)).contents;
+              expect_unlinked "retried captured file deletion"
+                (S.unlink_captured_file_if_identity ~parent file
+                   ~expected:(S.file_identity file)));
 
-            write_file (file_path "close-fault") "committed";
-            with_delete_file "close-fault" (fun file ->
-                inject_native_internal_fault delete_after_commit_fault_site
-                  false true;
-                match
-                  S.unlink_captured_file_if_identity ~parent file
-                    ~expected:(S.file_identity file)
-                with
-                | C.Deletion_incomplete
-                    {
-                      progress =
-                        {
-                          local_handle_state = C.Invalidated_unknown;
-                          namespace_released = false;
-                        };
-                      failure =
-                        {
-                          primary =
+          write_file (file_path "after") "committed";
+          with_delete_file "after" (fun file ->
+              inject_native_internal_fault delete_after_commit_fault_site true
+                false;
+              match
+                S.unlink_captured_file_if_identity ~parent file
+                  ~expected:(S.file_identity file)
+              with
+              | C.Deletion_incomplete
+                  {
+                    progress =
+                      {
+                        local_handle_state = C.Closed;
+                        namespace_released = true;
+                      };
+                    failure =
+                      { primary = C.Operation_error action; suppressed = [] };
+                  } ->
+                  Alcotest.(check string)
+                    "delete post-commit action is exact"
+                    "injected-delete-after-commit" action.native_code;
+                  Alcotest.(check bool)
+                    "post-commit file namespace released" false
+                    (Sys.file_exists (file_path "after"));
+                  expect_error C.Closed_capability
+                    (S.read_captured file ~limit:64L)
+              | C.Deletion_not_committed _ | C.Deletion_complete _
+              | C.Deletion_incomplete _ ->
+                  Alcotest.fail "delete post-commit evidence was not exact");
+
+          write_file (file_path "double-fault") "committed";
+          with_delete_file "double-fault" (fun file ->
+              inject_native_internal_fault delete_after_commit_fault_site true
+                true;
+              match
+                S.unlink_captured_file_if_identity ~parent file
+                  ~expected:(S.file_identity file)
+              with
+              | C.Deletion_incomplete
+                  {
+                    progress =
+                      {
+                        local_handle_state = C.Invalidated_unknown;
+                        namespace_released;
+                      };
+                    failure =
+                      {
+                        primary = C.Operation_error action;
+                        suppressed =
+                          [
                             C.Cleanup_error
                               { primary = cleanup; suppressed = [] };
-                          suppressed = [];
-                        };
-                    } ->
-                    Alcotest.(check bool)
-                      "delete cleanup-primary is exact" true
-                      (cleanup.error.native_code
+                          ];
+                      };
+                  } ->
+                  (* A committed POSIX unlink itself proves namespace release;
+                     Windows proves it only at terminal close. *)
+                  let released = not Sys.win32 in
+                  Alcotest.(check bool)
+                    "delete action then cleanup stay ordered" true
+                    (action.native_code = "injected-delete-after-commit"
+                    && cleanup.error.native_code
                        = "injected-internal-close-failure"
-                      && cleanup.local_handle_state = C.Invalidated_unknown
-                      && not cleanup.namespace_released)
-                | C.Deletion_not_committed _ | C.Deletion_complete _
-                | C.Deletion_incomplete _ ->
-                    Alcotest.fail "delete cleanup-primary evidence was lost");
+                    && cleanup.local_handle_state = C.Invalidated_unknown
+                    && namespace_released = released
+                    && cleanup.namespace_released = released)
+              | C.Deletion_not_committed _ | C.Deletion_complete _
+              | C.Deletion_incomplete _ ->
+                  Alcotest.fail
+                    "delete action and cleanup evidence was flattened");
 
-            Unix.mkdir (file_path "nonempty") 0o700;
-            write_file (Filename.concat (file_path "nonempty") "child") "x";
-            with_delete_directory "nonempty" (fun directory ->
-                match
-                  S.remove_captured_empty_directory_if_identity ~parent
-                    directory ~expected:(S.dir_identity directory)
-                with
-                | C.Deletion_not_committed error ->
-                    Alcotest.(check bool)
-                      "nonempty removal is pre-commit Busy" true
-                      (error.class_ = C.Busy);
-                    let names, _ =
-                      match
-                        S.enumerate_no_follow directory
-                          ~budget:(enumeration_budget ~entries:4L ~bytes:128L)
-                      with
-                      | S.Enumerated { names; consumption } ->
-                          (names, consumption)
-                      | S.Enumeration_incomplete { failure; _ } ->
-                          fail_error (C.issue_error failure.primary)
-                    in
-                    Alcotest.(check (list string))
-                      "nonempty target remains live"
-                      [ S.Native_name.encode (native_name "child") ]
-                      (List.map S.Native_name.encode names)
-                | C.Deletion_complete _ | C.Deletion_incomplete _ ->
-                    Alcotest.fail "nonempty directory deletion committed");
+          write_file (file_path "close-fault") "committed";
+          with_delete_file "close-fault" (fun file ->
+              inject_native_internal_fault delete_after_commit_fault_site false
+                true;
+              match
+                S.unlink_captured_file_if_identity ~parent file
+                  ~expected:(S.file_identity file)
+              with
+              | C.Deletion_incomplete
+                  {
+                    progress =
+                      {
+                        local_handle_state = C.Invalidated_unknown;
+                        namespace_released;
+                      };
+                    failure =
+                      {
+                        primary =
+                          C.Cleanup_error { primary = cleanup; suppressed = [] };
+                        suppressed = [];
+                      };
+                  } ->
+                  let released = not Sys.win32 in
+                  Alcotest.(check bool)
+                    "delete cleanup-primary is exact" true
+                    (cleanup.error.native_code
+                     = "injected-internal-close-failure"
+                    && cleanup.local_handle_state = C.Invalidated_unknown
+                    && namespace_released = released
+                    && cleanup.namespace_released = released)
+              | C.Deletion_not_committed _ | C.Deletion_complete _
+              | C.Deletion_incomplete _ ->
+                  Alcotest.fail "delete cleanup-primary evidence was lost");
 
-            Unix.mkdir (file_path "empty-delete") 0o700;
-            with_delete_directory "empty-delete" (fun directory ->
-                expect_unlinked "captured empty-directory deletion"
-                  (S.remove_captured_empty_directory_if_identity ~parent
-                     directory ~expected:(S.dir_identity directory));
-                Alcotest.(check bool)
-                  "captured directory namespace released" false
-                  (Sys.file_exists (file_path "empty-delete"))))
+          Unix.mkdir (file_path "nonempty") 0o700;
+          write_file (Filename.concat (file_path "nonempty") "child") "x";
+          with_delete_directory "nonempty" (fun directory ->
+              match
+                S.remove_captured_empty_directory_if_identity ~parent directory
+                  ~expected:(S.dir_identity directory)
+              with
+              | C.Deletion_not_committed error ->
+                  Alcotest.(check bool)
+                    "nonempty removal is pre-commit Busy" true
+                    (error.class_ = C.Busy);
+                  let names, _ =
+                    match
+                      S.enumerate_no_follow directory
+                        ~budget:(enumeration_budget ~entries:4L ~bytes:128L)
+                    with
+                    | S.Enumerated { names; consumption } -> (names, consumption)
+                    | S.Enumeration_incomplete { failure; _ } ->
+                        fail_error (C.issue_error failure.primary)
+                  in
+                  Alcotest.(check (list string))
+                    "nonempty target remains live"
+                    [ S.Native_name.encode (native_name "child") ]
+                    (List.map S.Native_name.encode names)
+              | C.Deletion_complete _ | C.Deletion_incomplete _ ->
+                  Alcotest.fail "nonempty directory deletion committed");
+
+          Unix.mkdir (file_path "empty-delete") 0o700;
+          with_delete_directory "empty-delete" (fun directory ->
+              expect_unlinked "captured empty-directory deletion"
+                (S.remove_captured_empty_directory_if_identity ~parent directory
+                   ~expected:(S.dir_identity directory));
+              Alcotest.(check bool)
+                "captured directory namespace released" false
+                (Sys.file_exists (file_path "empty-delete"))))
         ~finally:(fun () ->
           reset_native_internal_fault ();
           close_quietly S.close_directory other;
@@ -1905,7 +1886,7 @@ let publication_handle directory name =
   | Ok file -> file
   | Error failure ->
       let error = C.issue_error failure.primary in
-      if error.class_ = C.Unsupported then Alcotest.skip ()
+      if error.class_ = C.Unsupported then skip_unsupported error
       else fail_error error
 
 let expect_not_published expected = function
@@ -1946,171 +1927,147 @@ let test_atomic_no_replace_publication_and_fault_evidence () =
       let directory = existing_directory root in
       Fun.protect
         (fun () ->
-          if not Sys.win32 then (
-            write_file (Filename.concat root "unsupported.pending") "payload";
-            match
-              S.open_file_for_publish_no_follow directory
-                (native_name "unsupported.pending")
-            with
-            | Error failure ->
-                Alcotest.(check bool)
-                  "POSIX publication gap is explicit" true
-                  ((C.issue_error failure.primary).class_ = C.Unsupported)
-            | Ok file ->
-                close_quietly S.close_file file;
-                Alcotest.fail
-                  "POSIX publication capture claimed unsupported proof")
-          else
-            let final_target = publication_target root "final" in
-            let pre_fault_target = publication_target root "pre-fault" in
-            let post_fault_target = publication_target root "post-fault" in
-            let targets =
-              [ final_target; pre_fault_target; post_fault_target ]
-            in
-            List.iter
-              (assert_no_cwd_publication_target
-                 "unique publication target starts absent from cwd")
-              targets;
-            let publish source target payload =
-              write_file (Filename.concat root source) payload;
-              let file = publication_handle directory source in
-              ( file,
-                S.atomic_rename file ~into:directory ~as_:(native_name target)
-                  ~replacement:C.No_replace )
-            in
-            Fun.protect
-              (fun () ->
-                let first, first_result =
-                  publish "first.pending" final_target "first"
-                in
-                let first_live = ref (Some first) in
-                Fun.protect
-                  (fun () ->
-                    (match first_result with
-                    | C.Not_published error -> fail_error error
-                    | C.Published { advisories } ->
-                        Alcotest.(check int)
-                          "ordinary commit has no advisory" 0
-                          (List.length advisories));
-                    close_publication_handle "winning publication handle"
-                      first_live;
-                    assert_no_cwd_publication_target
-                      "ordinary commit never escapes to cwd" final_target;
-                    Alcotest.(check bool)
-                      "winning source was renamed" false
-                      (Sys.file_exists (Filename.concat root "first.pending"));
-                    Alcotest.(check string)
-                      "published bytes" "first"
-                      (read_file (Filename.concat root final_target)))
-                  ~finally:(fun () -> close_live_publication_handle first_live);
+          let final_target = publication_target root "final" in
+          let pre_fault_target = publication_target root "pre-fault" in
+          let post_fault_target = publication_target root "post-fault" in
+          let targets = [ final_target; pre_fault_target; post_fault_target ] in
+          List.iter
+            (assert_no_cwd_publication_target
+               "unique publication target starts absent from cwd")
+            targets;
+          let publish source target payload =
+            write_file (Filename.concat root source) payload;
+            let file = publication_handle directory source in
+            ( file,
+              S.atomic_rename file ~into:directory ~as_:(native_name target)
+                ~replacement:C.No_replace )
+          in
+          Fun.protect
+            (fun () ->
+              let first, first_result =
+                publish "first.pending" final_target "first"
+              in
+              let first_live = ref (Some first) in
+              Fun.protect
+                (fun () ->
+                  (match first_result with
+                  | C.Not_published error -> fail_error error
+                  | C.Published { advisories } ->
+                      Alcotest.(check int)
+                        "ordinary commit has no advisory" 0
+                        (List.length advisories));
+                  close_publication_handle "winning publication handle"
+                    first_live;
+                  assert_no_cwd_publication_target
+                    "ordinary commit never escapes to cwd" final_target;
+                  Alcotest.(check bool)
+                    "winning source was renamed" false
+                    (Sys.file_exists (Filename.concat root "first.pending"));
+                  Alcotest.(check string)
+                    "published bytes" "first"
+                    (read_file (Filename.concat root final_target)))
+                ~finally:(fun () -> close_live_publication_handle first_live);
 
-                let conflict, conflict_result =
-                  publish "conflict.pending" final_target "foreign"
-                in
-                let conflict_live = ref (Some conflict) in
-                Fun.protect
-                  (fun () ->
-                    expect_not_published C.Already_exists conflict_result;
-                    Alcotest.(check string)
-                      "losing captured stage remains exact" "foreign"
-                      (get_ok (S.read_captured conflict ~limit:64L)).contents;
-                    close_publication_handle "losing publication handle"
-                      conflict_live;
-                    assert_no_cwd_publication_target
-                      "conflict never escapes to cwd" final_target;
-                    Alcotest.(check string)
-                      "existing final was not replaced" "first"
-                      (read_file (Filename.concat root final_target));
-                    Alcotest.(check string)
-                      "losing stage remains exact" "foreign"
-                      (read_file (Filename.concat root "conflict.pending")))
-                  ~finally:(fun () ->
-                    close_live_publication_handle conflict_live);
+              let conflict, conflict_result =
+                publish "conflict.pending" final_target "foreign"
+              in
+              let conflict_live = ref (Some conflict) in
+              Fun.protect
+                (fun () ->
+                  expect_not_published C.Already_exists conflict_result;
+                  Alcotest.(check string)
+                    "losing captured stage remains exact" "foreign"
+                    (get_ok (S.read_captured conflict ~limit:64L)).contents;
+                  close_publication_handle "losing publication handle"
+                    conflict_live;
+                  assert_no_cwd_publication_target
+                    "conflict never escapes to cwd" final_target;
+                  Alcotest.(check string)
+                    "existing final was not replaced" "first"
+                    (read_file (Filename.concat root final_target));
+                  Alcotest.(check string)
+                    "losing stage remains exact" "foreign"
+                    (read_file (Filename.concat root "conflict.pending")))
+                ~finally:(fun () -> close_live_publication_handle conflict_live);
 
-                write_file
-                  (Filename.concat root "pre-fault.pending")
-                  "pre-fault";
-                let pre_fault =
-                  publication_handle directory "pre-fault.pending"
-                in
-                let pre_fault_live = ref (Some pre_fault) in
-                Fun.protect
-                  (fun () ->
-                    inject_native_internal_fault publish_fault_site true false;
-                    (match
-                       S.atomic_rename pre_fault ~into:directory
-                         ~as_:(native_name pre_fault_target)
-                         ~replacement:C.No_replace
-                     with
-                    | C.Not_published error ->
-                        Alcotest.(check string)
-                          "pre-commit fault evidence"
-                          "injected-publish-before-commit" error.native_code
-                    | C.Published _ ->
-                        Alcotest.fail "pre-commit fault published the stage");
-                    Alcotest.(check string)
-                      "pre-fault captured stage remains exact" "pre-fault"
-                      (get_ok (S.read_captured pre_fault ~limit:64L)).contents;
-                    close_publication_handle "pre-fault publication handle"
-                      pre_fault_live;
-                    assert_no_cwd_publication_target
-                      "pre-commit failure never escapes to cwd" pre_fault_target;
-                    Alcotest.(check bool)
-                      "pre-fault source remains" true
-                      (Sys.file_exists
-                         (Filename.concat root "pre-fault.pending"));
-                    Alcotest.(check bool)
-                      "pre-fault target absent" false
-                      (Sys.file_exists (Filename.concat root pre_fault_target)))
-                  ~finally:(fun () ->
-                    close_live_publication_handle pre_fault_live);
+              write_file (Filename.concat root "pre-fault.pending") "pre-fault";
+              let pre_fault =
+                publication_handle directory "pre-fault.pending"
+              in
+              let pre_fault_live = ref (Some pre_fault) in
+              Fun.protect
+                (fun () ->
+                  inject_native_internal_fault publish_fault_site true false;
+                  (match
+                     S.atomic_rename pre_fault ~into:directory
+                       ~as_:(native_name pre_fault_target)
+                       ~replacement:C.No_replace
+                   with
+                  | C.Not_published error ->
+                      Alcotest.(check string)
+                        "pre-commit fault evidence"
+                        "injected-publish-before-commit" error.native_code
+                  | C.Published _ ->
+                      Alcotest.fail "pre-commit fault published the stage");
+                  Alcotest.(check string)
+                    "pre-fault captured stage remains exact" "pre-fault"
+                    (get_ok (S.read_captured pre_fault ~limit:64L)).contents;
+                  close_publication_handle "pre-fault publication handle"
+                    pre_fault_live;
+                  assert_no_cwd_publication_target
+                    "pre-commit failure never escapes to cwd" pre_fault_target;
+                  Alcotest.(check bool)
+                    "pre-fault source remains" true
+                    (Sys.file_exists (Filename.concat root "pre-fault.pending"));
+                  Alcotest.(check bool)
+                    "pre-fault target absent" false
+                    (Sys.file_exists (Filename.concat root pre_fault_target)))
+                ~finally:(fun () ->
+                  close_live_publication_handle pre_fault_live);
 
-                write_file
-                  (Filename.concat root "post-fault.pending")
-                  "post-fault";
-                let post_fault =
-                  publication_handle directory "post-fault.pending"
-                in
-                let post_fault_live = ref (Some post_fault) in
-                Fun.protect
-                  (fun () ->
-                    inject_native_internal_fault publish_fault_site false true;
-                    (match
-                       S.atomic_rename post_fault ~into:directory
-                         ~as_:(native_name post_fault_target)
-                         ~replacement:C.No_replace
-                     with
-                    | C.Not_published error -> fail_error error
-                    | C.Published { advisories = [ advisory ] } ->
-                        Alcotest.(check string)
-                          "post-commit advisory evidence"
-                          "injected-post-publish-advisory" advisory.native_code
-                    | C.Published { advisories } ->
-                        Alcotest.failf
-                          "expected one post-commit advisory, got %d"
-                          (List.length advisories));
-                    close_publication_handle "post-fault publication handle"
-                      post_fault_live;
-                    assert_no_cwd_publication_target
-                      "post-commit advisory never escapes to cwd"
-                      post_fault_target;
-                    Alcotest.(check bool)
-                      "post-fault source consumed" false
-                      (Sys.file_exists
-                         (Filename.concat root "post-fault.pending"));
-                    Alcotest.(check string)
-                      "post-fault target authoritative" "post-fault"
-                      (read_file (Filename.concat root post_fault_target)))
-                  ~finally:(fun () ->
-                    close_live_publication_handle post_fault_live))
-              ~finally:(fun () ->
-                List.iter remove_cwd_publication_target targets))
+              write_file
+                (Filename.concat root "post-fault.pending")
+                "post-fault";
+              let post_fault =
+                publication_handle directory "post-fault.pending"
+              in
+              let post_fault_live = ref (Some post_fault) in
+              Fun.protect
+                (fun () ->
+                  inject_native_internal_fault publish_fault_site false true;
+                  (match
+                     S.atomic_rename post_fault ~into:directory
+                       ~as_:(native_name post_fault_target)
+                       ~replacement:C.No_replace
+                   with
+                  | C.Not_published error -> fail_error error
+                  | C.Published { advisories = [ advisory ] } ->
+                      Alcotest.(check string)
+                        "post-commit advisory evidence"
+                        "injected-post-publish-advisory" advisory.native_code
+                  | C.Published { advisories } ->
+                      Alcotest.failf "expected one post-commit advisory, got %d"
+                        (List.length advisories));
+                  close_publication_handle "post-fault publication handle"
+                    post_fault_live;
+                  assert_no_cwd_publication_target
+                    "post-commit advisory never escapes to cwd"
+                    post_fault_target;
+                  Alcotest.(check bool)
+                    "post-fault source consumed" false
+                    (Sys.file_exists
+                       (Filename.concat root "post-fault.pending"));
+                  Alcotest.(check string)
+                    "post-fault target authoritative" "post-fault"
+                    (read_file (Filename.concat root post_fault_target)))
+                ~finally:(fun () ->
+                  close_live_publication_handle post_fault_live))
+            ~finally:(fun () -> List.iter remove_cwd_publication_target targets))
         ~finally:(fun () ->
           reset_native_internal_fault ();
           close_quietly S.close_directory directory))
 
 let test_atomic_replace_publication_and_fault_evidence () =
-  if not Sys.win32 then Alcotest.skip ();
   with_temp_directory (fun root ->
       let directory = existing_directory root in
       let path name = Filename.concat root name in
@@ -2460,8 +2417,18 @@ let assert_child_spawn_survives_closed_stdin root =
       ignore (reap_child child))
 
 let test_cross_process_atomic_no_replace_conflict () =
-  if not Sys.win32 then Alcotest.skip ();
   with_temp_directory (fun root ->
+      (* Skip via the shared Unsupported rule on platforms without the
+         publication capability; the children would otherwise exit 20. *)
+      let probe_stage = "capability.probe" in
+      write_file (Filename.concat root probe_stage) "probe";
+      (let directory = existing_directory root in
+       Fun.protect
+         (fun () ->
+           let file = publication_handle directory probe_stage in
+           close_quietly S.close_file file)
+         ~finally:(fun () -> close_quietly S.close_directory directory));
+      Sys.remove (Filename.concat root probe_stage);
       let target = publication_target root "contended" in
       let left_source = "left.pending" in
       let right_source = "right.pending" in

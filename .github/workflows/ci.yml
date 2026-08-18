@@ -126,15 +126,25 @@ jobs:
         if: runner.os == 'Windows'
       - run: opam install . --deps-only --with-test
       - run: opam exec -- dune build @all
-      # The POSIX Run_store/Dir_cap substrate is a documented pre-release gate
-      # (docs/architecture.md), so the store-backed suites can only pass on
-      # Windows today. Re-enable the POSIX rows when the migration lands.
-      - name: Tests (Windows only until the POSIX store lands)
+      # Strict mode turns Unsupported-driven skips into failures.  It stays
+      # off on macOS, whose publication/rename capability is intentionally
+      # Unsupported without a /proc file-descriptor namespace
+      # (docs/architecture.md).
+      - name: Directory-capability suites
+        run: opam exec -- dune build @dircap
+        env:
+          OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE:
+            ${{ runner.os == 'macOS' && '0' || '1' }}
+      - name: Dogfood contracts
+        run: opam exec -- dune build @dogfood-fast
+      # dune runtest additionally drives the CLI end-to-end suites; the only
+      # remaining POSIX gap is byte-exact preprocessor reverse-mapping in the
+      # e2e ppx fixture (docs/architecture.md), so runtest stays Windows-only
+      # until that lands.
+      - name: Tests (Windows only until POSIX preprocessor reverse-mapping
+          lands)
         if: runner.os == 'Windows'
         run: opam exec -- dune runtest
-      - name: Dogfood contracts (Windows only until the POSIX store lands)
-        if: runner.os == 'Windows'
-        run: opam exec -- dune build @dogfood-fast
 
   dune-minimum:
     needs: changes
