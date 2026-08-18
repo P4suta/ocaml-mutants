@@ -103,3 +103,6 @@ show these states explicitly.
 
 Globs use `/` as the portable separator. `*` matches within a path component,
 `?` matches one non-separator byte, and `**` crosses directory boundaries.
+Matching is case-insensitive on Windows (patterns and paths are compared
+lowercased, following the filesystem convention) and case-sensitive on Linux
+and macOS.
