@@ -74,6 +74,15 @@ typedef struct dc_reparse_data_buffer {
 #define DC_HAVE_POSIX_OFD_LOCK 1
 #endif
 
+/* One-shot native no-replace rename: renameat2(RENAME_NOREPLACE) on Linux,
+   renameatx_np(RENAME_EXCL) on Darwin. Absent both, publication stays
+   fail-closed Unsupported; it is never emulated with a probe-then-rename. */
+#if !defined(_WIN32) &&                                    \
+    ((defined(__linux__) && defined(RENAME_NOREPLACE)) || \
+     (defined(__APPLE__) && defined(RENAME_EXCL)))
+#define DC_HAVE_POSIX_RENAME_NOREPLACE 1
+#endif
+
 enum dc_domain {
   DC_POSIX = 0,
   DC_WIN32 = 1,
@@ -114,6 +123,11 @@ struct dc_handle {
   uint64_t owner;
   int state;
   int invalidated_error;
+  /* POSIX only: the capture-time component name under the capturing parent,
+     retained so captured deletion and atomic rename can re-verify the
+     name-to-inode binding before their commit. Windows binds through the
+     live handle itself and leaves this NULL. Owned by the custom block. */
+  char *capture_name;
 };
 
 enum dc_handle_state {
@@ -239,6 +253,7 @@ static NTSTATUS dc_windows_read_at(HANDLE, void *, ULONG, uint64_t, ULONG *);
 #else
 static value dc_alloc_empty_handle(void);
 static void dc_arm_handle(value, int);
+static int dc_handle_retain_capture_name(value, const char *, size_t);
 static value dc_posix_error(int code);
 static int dc_posix_stat_value(const struct stat *, char *, size_t, int *,
                                int64_t *, int *, int64_t *);
@@ -665,24 +680,40 @@ CAMLprim value ocaml_mutants_dircap_open_child(value parent_value,
 #if defined(O_NOFOLLOW) && defined(O_CLOEXEC) && defined(O_DIRECTORY)
   {
     int flags = O_RDONLY | O_NOFOLLOW | O_CLOEXEC;
+    int directory_kind;
     int child;
     struct stat stat;
     char identity[DC_IDENTITY_CAPACITY];
     int kind, permissions;
     int64_t size, mtime_ns;
-    if (mode >= 3)
-      CAMLreturn(dc_raw_operation_failure(dc_error(
-          DC_POSIX, DC_UNSUPPORTED,
-          mode == 3 ? "immutable-publish-handle-unavailable"
-                    : "captured-delete-handle-unavailable")));
-    if (mode == 0)
+    directory_kind = mode == 0 || mode == 5;
+    if (directory_kind)
       flags |= O_DIRECTORY;
     else
       flags |= O_NONBLOCK;
     child = openat(parent_os, String_val(name_value), flags);
-    if (child < 0)
-      CAMLreturn(dc_raw_operation_failure(dc_posix_error(errno)));
+    if (child < 0) {
+      int error = errno;
+      /* With O_DIRECTORY, Linux folds the O_NOFOLLOW symlink refusal into
+         ENOTDIR; reclassify so callers observe the link rejection exactly as
+         the Windows reparse check reports it. Classification evidence only:
+         the open already failed. */
+      if (directory_kind && error == ENOTDIR) {
+        struct stat entry;
+        if (fstatat(parent_os, String_val(name_value), &entry,
+                    AT_SYMLINK_NOFOLLOW) == 0 &&
+            S_ISLNK(entry.st_mode))
+          CAMLreturn(dc_raw_operation_failure(
+              dc_error(DC_POSIX, DC_LINK_LIKE, "symbolic-link-no-follow")));
+      }
+      CAMLreturn(dc_raw_operation_failure(dc_posix_error(error)));
+    }
     dc_arm_handle(handle_value, child);
+    if (!dc_handle_retain_capture_name(handle_value, String_val(name_value),
+                                       caml_string_length(name_value))) {
+      error_result = dc_posix_error(ENOMEM);
+      CAMLreturn(dc_internal_action_failure(handle_value, error_result, 0));
+    }
     (void)dc_take_test_injection(DC_INJECT_CHILD, &inject_action,
                                  &inject_close);
     if (inject_action) {
@@ -696,15 +727,15 @@ CAMLprim value ocaml_mutants_dircap_open_child(value parent_value,
       CAMLreturn(dc_internal_action_failure(handle_value, error_result,
                                             inject_close));
     }
-    if ((mode == 0 && !S_ISDIR(stat.st_mode)) ||
-        (mode == 1 && !S_ISREG(stat.st_mode))) {
+    if ((directory_kind && !S_ISDIR(stat.st_mode)) ||
+        ((mode == 1 || mode == 3 || mode == 4) && !S_ISREG(stat.st_mode))) {
       error_result = dc_error(
-          DC_POSIX, mode == 0 ? DC_NOT_DIRECTORY : DC_NOT_REGULAR,
+          DC_POSIX, directory_kind ? DC_NOT_DIRECTORY : DC_NOT_REGULAR,
           "entry-kind-mismatch");
       CAMLreturn(dc_internal_action_failure(handle_value, error_result,
                                             inject_close));
     }
-    if (mode == 1) {
+    if (mode == 1 || mode == 3 || mode == 4) {
       int current_flags = fcntl(child, F_GETFL);
       if (current_flags < 0 ||
           fcntl(child, F_SETFL, current_flags & ~O_NONBLOCK) < 0) {
@@ -766,6 +797,8 @@ static int dc_close_os(struct dc_handle *handle) {
 static void dc_finalize(value value_handle) {
   struct dc_handle *handle = (struct dc_handle *)Data_custom_val(value_handle);
   (void)dc_close_os(handle);
+  free(handle->capture_name);
+  handle->capture_name = NULL;
 }
 
 static struct custom_operations dc_handle_operations = {
@@ -790,8 +823,24 @@ static value dc_alloc_empty_handle(void) {
   handle->owner = dc_owner();
   handle->state = DC_HANDLE_CLOSED;
   handle->invalidated_error = 0;
+  handle->capture_name = NULL;
   return result;
 }
+
+#ifndef _WIN32
+static int dc_handle_retain_capture_name(value handle_value, const char *name,
+                                         size_t length) {
+  struct dc_handle *handle =
+      (struct dc_handle *)Data_custom_val(handle_value);
+  char *copy = (char *)malloc(length + 1);
+  if (copy == NULL) return 0;
+  memcpy(copy, name, length);
+  copy[length] = '\0';
+  free(handle->capture_name);
+  handle->capture_name = copy;
+  return 1;
+}
+#endif
 
 static void dc_arm_handle(
     value handle_value,
@@ -2283,9 +2332,17 @@ CAMLprim value ocaml_mutants_dircap_duplicate(value handle_value) {
 #else
 #ifdef F_DUPFD_CLOEXEC
   {
+    /* The malloc'd capture-name buffer is stable; re-read it through the
+       original custom block, which may have moved during allocation. */
+    const char *source_capture =
+        ((struct dc_handle *)Data_custom_val(handle_value))->capture_name;
     int copy = fcntl(source_os, F_DUPFD_CLOEXEC, 0);
     if (copy < 0) CAMLreturn(dc_posix_error(errno));
     dc_arm_handle(copy_value, copy);
+    if (source_capture != NULL &&
+        !dc_handle_retain_capture_name(copy_value, source_capture,
+                                       strlen(source_capture)))
+      CAMLreturn(dc_posix_error(ENOMEM));
   }
 #else
   CAMLreturn(dc_error(DC_POSIX, DC_UNSUPPORTED,
@@ -2782,11 +2839,112 @@ CAMLprim value ocaml_mutants_dircap_create_directory(
                                    native_permissions, mtime_ns);
   }
 #else
+#if defined(O_NOFOLLOW) && defined(O_CLOEXEC) && defined(O_DIRECTORY)
+  {
+    struct stat parent_stat, child_stat;
+    char parent_identity[DC_IDENTITY_CAPACITY];
+    char child_identity[DC_IDENTITY_CAPACITY];
+    int child;
+    int kind, native_permissions;
+    int64_t size, mtime_ns;
+    if (fstat(parent->os, &parent_stat) != 0) {
+      error_result = dc_posix_error(errno);
+      CAMLreturn(dc_raw_create_not_committed(error_result));
+    }
+    if (!S_ISDIR(parent_stat.st_mode)) {
+      error_result = dc_error(DC_POSIX, DC_NOT_DIRECTORY,
+                              "create-directory-parent-is-not-directory");
+      CAMLreturn(dc_raw_create_not_committed(error_result));
+    }
+    if (!dc_posix_identity(&parent_stat, parent_identity,
+                           sizeof(parent_identity))) {
+      error_result = dc_posix_error(EOVERFLOW);
+      CAMLreturn(dc_raw_create_not_committed(error_result));
+    }
+    if (strlen(parent_identity) != caml_string_length(parent_identity_value) ||
+        memcmp(parent_identity, String_val(parent_identity_value),
+               caml_string_length(parent_identity_value)) != 0) {
+      error_result = dc_error(DC_CONTRACT, DC_OTHER,
+                              "create-directory-parent-identity-changed");
+      CAMLreturn(dc_raw_create_not_committed(error_result));
+    }
+    /* mkdirat is the atomic never-join commit: an existing entry of any kind
+       fails with EEXIST, and the umask can only narrow the requested
+       owner-only mode, which the post-commit fchmod restores exactly. */
+    if (mkdirat(parent->os, String_val(name_value),
+                DC_OWNER_PRIVATE_DIRECTORY_PERMISSIONS) != 0) {
+      error_result = dc_posix_error(errno);
+      CAMLreturn(dc_raw_create_not_committed(error_result));
+    }
+    child = openat(parent->os, String_val(name_value),
+                   O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (child < 0) {
+      error_result = dc_posix_error(errno);
+      failure_result = dc_raw_operation_failure(error_result);
+      CAMLreturn(dc_raw_create_may_have_committed(failure_result));
+    }
+    handle_value = dc_alloc_empty_handle();
+    dc_arm_handle(handle_value, child);
+    if (!dc_handle_retain_capture_name(handle_value, String_val(name_value),
+                                       caml_string_length(name_value))) {
+      error_result = dc_posix_error(ENOMEM);
+      failure_result = dc_internal_action_failure(handle_value, error_result,
+                                                  0);
+      CAMLreturn(dc_raw_create_may_have_committed(failure_result));
+    }
+#define DC_CREATE_POST_COMMIT_FAILURE(expression, close_fault)               \
+  do {                                                                        \
+    error_result = (expression);                                              \
+    failure_result = dc_internal_action_failure(handle_value, error_result,  \
+                                                (close_fault));               \
+    CAMLreturn(dc_raw_create_may_have_committed(failure_result));             \
+  } while (0)
+    (void)dc_take_test_injection(DC_INJECT_CREATE_AFTER_COMMIT,
+                                 &inject_action, &inject_close);
+    if (inject_action || inject_close)
+      DC_CREATE_POST_COMMIT_FAILURE(
+          dc_injected_action_error(DC_INJECT_CREATE_AFTER_COMMIT),
+          inject_close);
+    if (fchmod(child, DC_OWNER_PRIVATE_DIRECTORY_PERMISSIONS) != 0)
+      DC_CREATE_POST_COMMIT_FAILURE(dc_posix_error(errno), 0);
+    if (fstat(child, &child_stat) != 0)
+      DC_CREATE_POST_COMMIT_FAILURE(dc_posix_error(errno), 0);
+    if (!S_ISDIR(child_stat.st_mode))
+      DC_CREATE_POST_COMMIT_FAILURE(
+          dc_error(DC_POSIX, DC_NOT_DIRECTORY,
+                   "created-entry-is-not-directory"),
+          0);
+    if (child_stat.st_uid != geteuid())
+      DC_CREATE_POST_COMMIT_FAILURE(
+          dc_error(DC_CONTRACT, DC_ACCESS_DENIED,
+                   "created-directory-owner-mismatch"),
+          0);
+    if ((child_stat.st_mode & 07777) !=
+        DC_OWNER_PRIVATE_DIRECTORY_PERMISSIONS)
+      DC_CREATE_POST_COMMIT_FAILURE(
+          dc_error(DC_CONTRACT, DC_ACCESS_DENIED,
+                   "created-directory-permissions-not-owner-private"),
+          0);
+    if (child_stat.st_dev != parent_stat.st_dev)
+      DC_CREATE_POST_COMMIT_FAILURE(
+          dc_error(DC_CONTRACT, DC_OTHER,
+                   "created-directory-crossed-device-boundary"),
+          0);
+    if (!dc_posix_stat_value(&child_stat, child_identity,
+                             sizeof(child_identity), &kind, &size,
+                             &native_permissions, &mtime_ns))
+      DC_CREATE_POST_COMMIT_FAILURE(dc_posix_error(errno), 0);
+#undef DC_CREATE_POST_COMMIT_FAILURE
+    stat_value = dc_alloc_raw_stat(child_identity, kind, size,
+                                   native_permissions, mtime_ns);
+  }
+#else
   (void)name_value;
   (void)parent_identity_value;
   error_result = dc_error(DC_POSIX, DC_UNSUPPORTED,
                           "owner-private-directory-create-unavailable");
   CAMLreturn(dc_raw_create_not_committed(error_result));
+#endif
 #endif
   payload = caml_alloc_tuple(2);
   Store_field(payload, 0, handle_value);
@@ -3014,6 +3172,13 @@ CAMLprim value ocaml_mutants_dircap_create_file(
     }
     handle_value = dc_alloc_empty_handle();
     dc_arm_handle(handle_value, child);
+    if (!dc_handle_retain_capture_name(handle_value, String_val(name_value),
+                                       caml_string_length(name_value))) {
+      error_result = dc_posix_error(ENOMEM);
+      failure_result = dc_internal_action_failure(handle_value, error_result,
+                                                  0);
+      CAMLreturn(dc_raw_create_may_have_committed(failure_result));
+    }
 #define DC_CREATE_FILE_POST_COMMIT_FAILURE(expression, close_fault)          \
   do {                                                                        \
     error_result = (expression);                                              \
@@ -3230,6 +3395,127 @@ CAMLprim value ocaml_mutants_dircap_delete_captured(
   CAMLreturn(dc_raw_delete_not_committed(error_result));
 #endif
 #else
+#if defined(O_NOFOLLOW) && defined(O_CLOEXEC)
+  {
+    struct stat parent_stat, target_stat, bound_stat;
+    char parent_identity[DC_IDENTITY_CAPACITY];
+    char target_identity[DC_IDENTITY_CAPACITY];
+    char bound_identity[DC_IDENTITY_CAPACITY];
+    int namespace_released = 0;
+    if (fstat(parent->os, &parent_stat) != 0) {
+      error_result = dc_posix_error(errno);
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if (!S_ISDIR(parent_stat.st_mode)) {
+      error_result = dc_error(DC_POSIX, DC_NOT_DIRECTORY,
+                              "captured-delete-parent-is-not-directory");
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if (!dc_posix_identity(&parent_stat, parent_identity,
+                           sizeof(parent_identity))) {
+      error_result = dc_posix_error(EOVERFLOW);
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if (strlen(parent_identity) != caml_string_length(parent_identity_value) ||
+        memcmp(parent_identity, String_val(parent_identity_value),
+               caml_string_length(parent_identity_value)) != 0) {
+      error_result = dc_error(DC_CONTRACT, DC_OTHER,
+                              "captured-delete-parent-identity-changed");
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if (fstat(target->os, &target_stat) != 0) {
+      error_result = dc_posix_error(errno);
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if ((target_kind == 0 && !S_ISREG(target_stat.st_mode)) ||
+        (target_kind == 1 && !S_ISDIR(target_stat.st_mode))) {
+      error_result = dc_error(
+          DC_POSIX, target_kind == 0 ? DC_NOT_REGULAR : DC_NOT_DIRECTORY,
+          "captured-delete-target-kind-mismatch");
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if (!dc_posix_identity(&target_stat, target_identity,
+                           sizeof(target_identity))) {
+      error_result = dc_posix_error(EOVERFLOW);
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if (strlen(target_identity) != caml_string_length(target_identity_value) ||
+        memcmp(target_identity, String_val(target_identity_value),
+               caml_string_length(target_identity_value)) != 0)
+      CAMLreturn(dc_ok(Val_false));
+    if (strcmp(parent_identity, target_identity) == 0) {
+      error_result = dc_error(DC_CONTRACT, DC_OTHER,
+                              "captured-delete-target-is-parent");
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if (target->capture_name == NULL) {
+      error_result = dc_error(DC_POSIX, DC_UNSUPPORTED,
+                              "captured-delete-name-unavailable");
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    /* POSIX has no delete-by-handle: the commit is a verified-name unlinkat
+       under the live parent capability. A name that no longer resolves to the
+       pinned inode is refused, unlike Windows, which deletes the pinned
+       object even after a rename. */
+    if (fstatat(parent->os, target->capture_name, &bound_stat,
+                AT_SYMLINK_NOFOLLOW) != 0) {
+      if (errno == ENOENT) CAMLreturn(dc_ok(Val_false));
+      error_result = dc_posix_error(errno);
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if (!dc_posix_identity(&bound_stat, bound_identity,
+                           sizeof(bound_identity))) {
+      error_result = dc_posix_error(EOVERFLOW);
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if (strcmp(bound_identity, target_identity) != 0)
+      CAMLreturn(dc_ok(Val_false));
+    (void)dc_take_test_injection(DC_INJECT_DELETE_BEFORE_COMMIT,
+                                 &inject_action, &inject_close);
+    if (inject_action || inject_close) {
+      error_result =
+          dc_injected_action_error(DC_INJECT_DELETE_BEFORE_COMMIT);
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    if (unlinkat(parent->os, target->capture_name,
+                 target_kind == 1 ? AT_REMOVEDIR : 0) != 0) {
+      if (errno == ENOENT) CAMLreturn(dc_ok(Val_false));
+      error_result = dc_posix_error(errno);
+      CAMLreturn(dc_raw_delete_not_committed(error_result));
+    }
+    /* Post-commit evidence: the pinned inode's link count dropping to zero
+       proves the removed entry was the captured one and not a rebound name
+       that won the verify-to-commit window. */
+    if (fstat(target->os, &target_stat) == 0)
+      namespace_released = target_stat.st_nlink == 0;
+    (void)dc_take_test_injection(DC_INJECT_DELETE_AFTER_COMMIT,
+                                 &inject_action, &inject_close);
+    if (inject_action) {
+      error_result = dc_injected_action_error(DC_INJECT_DELETE_AFTER_COMMIT);
+      failure_result = dc_internal_action_failure(target_value, error_result,
+                                                  inject_close);
+      target = (struct dc_handle *)Data_custom_val(target_value);
+      CAMLreturn(dc_raw_delete_may_have_committed(
+          target->state, namespace_released, failure_result));
+    }
+    if (!namespace_released) {
+      error_result = dc_error(DC_CONTRACT, DC_OTHER,
+                              "captured-delete-removed-rebound-entry");
+      failure_result = dc_internal_action_failure(target_value, error_result,
+                                                  inject_close);
+      target = (struct dc_handle *)Data_custom_val(target_value);
+      CAMLreturn(
+          dc_raw_delete_may_have_committed(target->state, 0, failure_result));
+    }
+    cleanup_result = dc_internal_close_terminal(target_value, inject_close);
+    if (Tag_val(cleanup_result) == 1) {
+      failure_result = dc_raw_cleanup_failure(cleanup_result);
+      target = (struct dc_handle *)Data_custom_val(target_value);
+      CAMLreturn(dc_raw_delete_may_have_committed(
+          target->state, namespace_released, failure_result));
+    }
+  }
+#else
   (void)parent_identity_value;
   (void)target_identity_value;
   (void)inject_action;
@@ -3237,6 +3523,7 @@ CAMLprim value ocaml_mutants_dircap_delete_captured(
   error_result = dc_error(DC_POSIX, DC_UNSUPPORTED,
                           "atomic-captured-handle-delete-unavailable");
   CAMLreturn(dc_raw_delete_not_committed(error_result));
+#endif
 #endif
   result = dc_ok(Val_true);
   CAMLreturn(result);
@@ -3724,10 +4011,92 @@ CAMLprim value ocaml_mutants_dircap_atomic_rename(value source_value,
     if (status < 0) CAMLreturn(dc_nt_error(status));
   }
 #else
+#ifdef DC_HAVE_POSIX_RENAME_NOREPLACE
+  {
+    struct stat parent_stat, source_stat, bound_stat;
+    char parent_identity[DC_IDENTITY_CAPACITY];
+    char source_identity[DC_IDENTITY_CAPACITY];
+    char bound_identity[DC_IDENTITY_CAPACITY];
+    const char *source_capture;
+    int commit;
+    if (fstat(target_parent->os, &parent_stat) != 0)
+      CAMLreturn(dc_posix_error(errno));
+    if (!S_ISDIR(parent_stat.st_mode))
+      CAMLreturn(dc_error(DC_POSIX, DC_NOT_DIRECTORY,
+                          "publication-parent-is-not-directory"));
+    if (!dc_posix_identity(&parent_stat, parent_identity,
+                           sizeof(parent_identity)))
+      CAMLreturn(dc_posix_error(EOVERFLOW));
+    if (strlen(parent_identity) != caml_string_length(parent_identity_value) ||
+        memcmp(parent_identity, String_val(parent_identity_value),
+               caml_string_length(parent_identity_value)) != 0)
+      CAMLreturn(dc_error(DC_CONTRACT, DC_OTHER,
+                          "publication-parent-identity-changed"));
+    source_capture = source->capture_name;
+    if (source_capture == NULL)
+      CAMLreturn(dc_error(DC_POSIX, DC_UNSUPPORTED,
+                          "stable-source-binding-for-rename-unavailable"));
+    if (fstat(source->os, &source_stat) != 0)
+      CAMLreturn(dc_posix_error(errno));
+    if (!dc_posix_identity(&source_stat, source_identity,
+                           sizeof(source_identity)))
+      CAMLreturn(dc_posix_error(EOVERFLOW));
+    /* The retained capture name is re-verified against the still-open source
+       inode immediately before the one-shot native commit. A same-effective-
+       uid namespace writer can win this window; the contract discloses that
+       residual exactly as it does for creation evidence. */
+    if (fstatat(target_parent->os, source_capture, &bound_stat,
+                AT_SYMLINK_NOFOLLOW) != 0)
+      CAMLreturn(errno == ENOENT
+                     ? dc_error(DC_CONTRACT, DC_OTHER,
+                                "publication-source-binding-changed")
+                     : dc_posix_error(errno));
+    if (!dc_posix_identity(&bound_stat, bound_identity,
+                           sizeof(bound_identity)))
+      CAMLreturn(dc_posix_error(EOVERFLOW));
+    if (strcmp(bound_identity, source_identity) != 0)
+      CAMLreturn(dc_error(DC_CONTRACT, DC_OTHER,
+                          "publication-source-binding-changed"));
+#ifdef __linux__
+    commit = replacement == 0
+                 ? renameat2(target_parent->os, source_capture,
+                             target_parent->os, String_val(name_value),
+                             RENAME_NOREPLACE)
+                 : renameat(target_parent->os, source_capture,
+                            target_parent->os, String_val(name_value));
+#else
+    commit = replacement == 0
+                 ? renameatx_np(target_parent->os, source_capture,
+                                target_parent->os, String_val(name_value),
+                                RENAME_EXCL)
+                 : renameat(target_parent->os, source_capture,
+                            target_parent->os, String_val(name_value));
+#endif
+    if (commit != 0) {
+      int error = errno;
+      if (replacement == 0 &&
+          (error == EINVAL || error == ENOSYS || error == ENOTSUP))
+        CAMLreturn(dc_error(DC_POSIX, DC_UNSUPPORTED,
+                            "no-replace-rename-unavailable"));
+      CAMLreturn(dc_posix_error(error));
+    }
+    /* The retained binding now points at the destination name. A failed
+       retention clears it so later name-verified operations fail closed
+       instead of re-verifying against the stale source name. */
+    if (!dc_handle_retain_capture_name(source_value, String_val(name_value),
+                                       caml_string_length(name_value))) {
+      struct dc_handle *live =
+          (struct dc_handle *)Data_custom_val(source_value);
+      free(live->capture_name);
+      live->capture_name = NULL;
+    }
+  }
+#else
   (void)name_value;
   (void)parent_identity_value;
   CAMLreturn(dc_error(DC_POSIX, DC_UNSUPPORTED,
                       "stable-source-binding-for-rename-unavailable"));
+#endif
 #endif
   advisories = Val_emptylist;
   if (inject_after_commit) {

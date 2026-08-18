@@ -333,14 +333,14 @@ module type S = sig
       regardless of outcome. Other non-close operations never return
       [Still_open] for an internal temporary handle.
 
-      [System] can materialize exactly one missing component on Windows. It
-      creates that leaf relative to the retained deepest parent handle with the
-      same owner-private, no-reparse contract as [create_directory], checks the
-      new identity against the live forbidden chain, and returns the live child
+      [System] can materialize exactly one missing component. It creates that
+      leaf relative to the retained deepest parent handle with the same
+      owner-private, no-reparse contract as [create_directory], checks the new
+      identity against the live forbidden chain, and returns the live child
       capability. The captured parent may be a proper ancestor in that chain
       only when [establish_separation] recorded the exclusive missing-leaf
-      proof. It never joins a colliding entry. A longer missing suffix and every
-      missing suffix on POSIX fail before commit with [Unsupported]. *)
+      proof. It never joins a colliding entry. A longer missing suffix fails
+      before commit with [Unsupported] on every platform. *)
 
   val enumeration_budget :
     max_entries:int64 ->
@@ -367,28 +367,32 @@ module type S = sig
 
   val open_directory_for_delete_no_follow :
     dir -> Native_name.t -> (dir, failure) result
-  (** Captures one existing directory child with the native delete authority and
-      sharing exclusion required by
-      [remove_captured_empty_directory_if_identity]. It never follows a
-      link-like leaf. A backend that cannot pin this authority without later
-      name lookup returns [Unsupported]. *)
+  (** Captures one existing directory child with the delete authority required
+      by [remove_captured_empty_directory_if_identity]. It never follows a
+      link-like leaf. Windows pins the name with delete-sharing exclusion; POSIX
+      pins the inode and retains the capture-time component so deletion can
+      re-verify the name-to-inode binding before its commit. *)
 
   val duplicate_directory : dir -> (dir, failure) result
   val open_file_no_follow : dir -> Native_name.t -> (file, failure) result
 
   val open_file_for_delete_no_follow :
     dir -> Native_name.t -> (file, failure) result
-  (** Captures one existing regular file with delete access while refusing new
-      write/delete sharing. It never follows a link-like leaf. The returned
-      capability, rather than its former name, is the deletion authority. *)
+  (** Captures one existing regular file with delete authority. It never follows
+      a link-like leaf. The returned capability, rather than its former name, is
+      the deletion authority. Windows additionally refuses new write/delete
+      sharing for the handle's lifetime; POSIX has no mandatory sharing and
+      instead retains the capture-time component for the verified-name deletion
+      commit. *)
 
   val open_file_for_publish_no_follow :
     dir -> Native_name.t -> (file, failure) result
-  (** Captures an existing regular file for immutable publication. Success
-      proves that the live handle both denies concurrent content mutation and
-      carries the native authority required by [atomic_rename]. A backend that
-      cannot prove both properties must return [Unsupported]. The operation
-      never creates, replaces, or follows the named entry. *)
+  (** Captures an existing regular file for publication. Success proves the live
+      handle carries the authority required by [atomic_rename]. Windows sharing
+      additionally denies concurrent content mutation for the handle's lifetime;
+      POSIX does not exclude another process with the same effective user,
+      exactly as [create_file] discloses. The operation never creates, replaces,
+      or follows the named entry. *)
 
   val read_captured : file -> limit:int64 -> (captured_read, error) result
   (** Reads and stats the object represented by [file]. A namespace lookup must
@@ -398,19 +402,23 @@ module type S = sig
 
   val create_directory :
     dir -> Native_name.t -> permissions:Permissions.t -> dir creation_outcome
-  (** Creates exactly one child relative to the captured parent. On Windows,
-      [System] accepts only [Permissions.owner_private_directory], applies a
-      protected owner-only inheritable DACL in the same [FILE_CREATE] request,
-      and returns a live child handle that refuses delete sharing. A name that
-      appeared first, including a reparse point, is never opened or traversed. A
-      post-commit capture failure is reported as [Creation_may_have_committed],
-      with terminal handle-cleanup evidence kept in the failure. POSIX remains
-      unsupported until equivalent owner and mount/namespace authority is
-      proven. Creation evidence is not rollback authority. The retained child
-      handle can be used with [remove_captured_empty_directory_if_identity] only
-      while the caller also retains the matching captured parent capability;
-      callers must never turn evidence or a diagnostic identity into an
-      ambient-path delete. *)
+  (** Creates exactly one child relative to the captured parent. [System]
+      accepts only [Permissions.owner_private_directory]. Windows applies a
+      protected owner-only inheritable DACL in the same [FILE_CREATE] request
+      and returns a live child handle that refuses delete sharing. POSIX commits
+      with [mkdirat] — the atomic never-join boundary: an existing entry of any
+      kind fails with a collision, and the umask can only narrow the requested
+      owner-only mode, which the post-commit [fchmod] restores exactly — then
+      captures the child no-follow and verifies directory kind, exact owner-only
+      mode, effective-uid ownership, and that the child shares the parent's
+      device (no mount boundary was crossed). A name that appeared first,
+      including a link-like entry, is never opened or traversed. A post-commit
+      capture failure is reported as [Creation_may_have_committed], with
+      terminal handle-cleanup evidence kept in the failure. Creation evidence is
+      not rollback authority. The retained child handle can be used with
+      [remove_captured_empty_directory_if_identity] only while the caller also
+      retains the matching captured parent capability; callers must never turn
+      evidence or a diagnostic identity into an ambient-path delete. *)
 
   val create_file :
     dir ->
@@ -451,11 +459,19 @@ module type S = sig
       [Published] guarantees that it was committed; later durability or
       handle-cleanup failures appear only as ordered [advisories]. [No_replace]
       is one indivisible commit attempt; an existence probe followed by a
-      replacing rename does not satisfy this contract. On Windows, [System]
-      implements both policies from the captured source and same-parent handles
-      with [FileRenameInformationEx]; [Replace] selects the native
-      replace-if-present flag in that one commit attempt. POSIX remains
-      [Unsupported] until an equally stable source binding is available. *)
+      replacing rename does not satisfy this contract on any platform. On
+      Windows, [System] implements both policies from the captured source and
+      same-parent handles with [FileRenameInformationEx]; [Replace] selects the
+      native replace-if-present flag in that one commit attempt. POSIX retains
+      the capture-time component inside the source capability, re-verifies that
+      name against the still-open source inode immediately before the commit,
+      and commits with one native no-replace rename ([renameat2] with
+      [RENAME_NOREPLACE] on Linux, [renameatx_np] with [RENAME_EXCL] on Darwin)
+      or one plain [renameat] for [Replace]. A same-effective-uid namespace
+      writer can win the verify-to-commit window; that residual is exactly the
+      one the module preamble already excludes from hard guarantees. A
+      filesystem without a native no-replace rename fails closed with
+      [Unsupported] — the probe-then-rename emulation stays forbidden. *)
 
   val unlink_if_identity :
     dir ->
@@ -470,12 +486,19 @@ module type S = sig
 
   val unlink_captured_file_if_identity :
     parent:dir -> file -> expected:Identity.t -> conditional_delete_outcome
-  (** Conditionally deletes the entry pinned by [file], without resolving a
-      name. [parent] and [expected] must match the parent/target identities
-      bound when the delete-authority handle was captured. Windows installs a
-      POSIX-style delete disposition on that exact handle and terminally closes
-      it. POSIX returns [Deletion_not_committed Unsupported]; it must not
-      emulate this operation with [fstatat] followed by [unlinkat]. *)
+  (** Conditionally deletes the entry pinned by [file]. [parent] and [expected]
+      must match the parent/target identities bound when the delete-authority
+      handle was captured. Windows deletes by handle: it installs a POSIX-style
+      delete disposition on that exact handle and terminally closes it, removing
+      the pinned object even if the entry was renamed. POSIX has no
+      delete-by-handle; its commit is a verified-name [unlinkat] of the retained
+      capture component under the live parent capability: a name that no longer
+      resolves to the pinned inode is refused as [Identity_changed], and
+      post-commit link-count evidence through the still-open handle
+      distinguishes the pinned inode's release from the removal of an entry
+      rebound during the verify-to-commit window, which is reported as
+      [Deletion_incomplete]. The Windows/POSIX divergence on renamed targets —
+      Windows deletes, POSIX refuses — is deliberate. *)
 
   val unlink_link_no_follow :
     dir ->
@@ -494,8 +517,10 @@ module type S = sig
     parent:dir -> dir -> expected:Identity.t -> conditional_delete_outcome
   (** The directory analogue of [unlink_captured_file_if_identity]. The target
       is the captured directory handle itself; emptiness and deletion are one
-      native disposition attempt. A failed non-empty check is pre-commit and
-      leaves the target live. Link-like deletion remains outside this API. *)
+      native attempt — the Windows delete disposition, or the POSIX
+      verified-name [unlinkat] with the remove-directory flag. A failed
+      non-empty check is pre-commit and leaves the target live. Link-like
+      deletion remains outside this API. *)
 
   val try_lock :
     dir ->
@@ -543,22 +568,24 @@ end
 module System : S
 (** The native directory-capability backend. Descendant operations use captured
     OS handles. Operations that do not yet have a race-free native primitive
-    fail closed with [Unsupported]. On Windows, [materialize] can create exactly
-    one missing leaf below the deepest retained candidate handle. This includes
-    a missing sibling of a complete forbidden path under their shared captured
-    parent; the generic [relationship] remains ambiguous, while
-    [establish_separation] records the narrower exclusive-create proof. It never
-    traverses or joins a collision, and longer missing suffixes remain
-    unsupported. Windows also supports one owner-private [create_directory]
-    below an already captured parent. Both paths use root-relative
-    [FILE_CREATE], a protected DACL granting the effective token user
-    [FILE_ALL_ACCESS] with container/object inheritance, and no delete sharing
-    on the returned handle. POSIX directory creation and missing-root
-    materialization remain unsupported because mount/exclusive-namespace proof
-    is absent. POSIX [O_NOFOLLOW] rejects symbolic-link traversal but does not
-    prove a mount boundary (including bind mounts); production recursive
-    traversal additionally requires native mount identity and no-cross-device
-    resolution proof.
+    fail closed with [Unsupported]. [materialize] can create exactly one missing
+    leaf below the deepest retained candidate handle. This includes a missing
+    sibling of a complete forbidden path under their shared captured parent; the
+    generic [relationship] remains ambiguous, while [establish_separation]
+    records the narrower exclusive-create proof. It never traverses or joins a
+    collision, and longer missing suffixes remain unsupported. Both platforms
+    also support one owner-private [create_directory] below an already captured
+    parent. Windows uses root-relative [FILE_CREATE], a protected DACL granting
+    the effective token user [FILE_ALL_ACCESS] with container/object
+    inheritance, and no delete sharing on the returned handle. POSIX commits
+    with [mkdirat(0o700)] — the atomic never-join boundary — captures the child
+    no-follow, restores the exact owner-only mode after any umask restriction,
+    and verifies kind, mode, effective-uid ownership, and that the child shares
+    the parent's device, which proves this single component crossed no mount
+    boundary. POSIX [O_NOFOLLOW] rejects symbolic-link traversal but does not
+    prove a mount boundary (including bind mounts) for deeper paths; production
+    recursive traversal additionally requires native mount identity and
+    no-cross-device resolution proof.
 
     Both platforms support one owner-private [create_file] below an already
     captured parent, without replacement. Windows supplies and then verifies a
@@ -603,25 +630,33 @@ module System : S
     lifetime of the returned target handle. Captured deletion revalidates the
     live parent/target identities and kinds, then installs a POSIX-style delete
     disposition on that exact target handle and terminally closes it. It never
-    reconstructs or resolves the former target name. Empty-directory removal
-    uses the same native disposition, so a nonempty result is pre-commit and
-    leaves the capability live. Its outcome preserves whether the disposition
-    may have committed, the terminal/retryable local-handle state, namespace
-    release proof, and ordered action/cleanup errors. POSIX returns
-    [Unsupported] and does not emulate this contract with a stat/unlink pair.
-    Link-like deletion remains outside this bounded primitive.
+    reconstructs or resolves the former target name. POSIX delete capture pins
+    the inode no-follow and retains the capture-time component; captured
+    deletion revalidates the same identities and kinds, refuses a name that no
+    longer resolves to the pinned inode, commits with one verified-name
+    [unlinkat] under the live parent capability, and keeps post-commit
+    link-count evidence through the still-open handle as the namespace-release
+    proof. Empty-directory removal uses the same commit (the native disposition
+    on Windows, the remove-directory flag on POSIX), so a nonempty result is
+    pre-commit and leaves the capability live. Its outcome preserves whether the
+    commit may have happened, the terminal/retryable local-handle state,
+    namespace release proof, and ordered action/cleanup errors. Link-like
+    deletion remains outside this bounded primitive.
 
-    Windows immutable publication capture records the captured parent identity
-    and opens an exact-case root-relative handle with write/delete sharing
-    denied. [atomic_rename] accepts only that same live directory identity, then
+    Publication capture records the captured parent identity and opens an
+    exact-case root-relative handle — with write/delete sharing denied on
+    Windows, and with the capture-time component retained on POSIX.
+    [atomic_rename] accepts only that same live directory identity. Windows then
     calls native [NtSetInformationFile] with [FileRenameInformationEx], that
-    directory handle as [RootDirectory], and one native component. [No_replace]
-    uses flags zero; [Replace] uses the documented
-    [FILE_RENAME_REPLACE_IF_EXISTS] flag. Both are single exact-handle commit
-    attempts, and destination resolution cannot fall back to the process current
-    directory. POSIX currently returns [Unsupported]: [renameat2] would
-    re-resolve a source name and the present [file] capability does not retain a
-    kernel-enforced immutable source binding suitable for that operation.
+    directory handle as [RootDirectory], and one native component; [No_replace]
+    uses flags zero and [Replace] uses the documented
+    [FILE_RENAME_REPLACE_IF_EXISTS] flag. POSIX re-verifies the retained
+    component against the still-open source inode immediately before one native
+    commit: [renameat2(RENAME_NOREPLACE)] on Linux, [renameatx_np(RENAME_EXCL)]
+    on Darwin, or plain [renameat] for [Replace]. All are single commit
+    attempts, destination resolution cannot fall back to the process current
+    directory, and a filesystem without a native no-replace rename fails closed
+    with [Unsupported].
 
     Root and child acquisition failures, and Windows probe-entry temporary
     handle failures, preserve the action as primary and append every terminal
