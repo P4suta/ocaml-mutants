@@ -126,7 +126,6 @@ module Spec : sig
   type rejection
   type packed
   type if_branch_target = Then_branch | Else_branch
-  type binary_transition
 
   type evaluation =
     | Candidate of { rule : Rule.t; plan : Replacement_plan.t }
@@ -134,22 +133,6 @@ module Spec : sig
 
   val rule : packed -> Rule.t
   val rejection_name : rejection -> string
-
-  val find_binary_transition : original:string -> binary_transition option
-  (** Projects the unique exact binary-operator transition from the registry.
-      This is the compatibility oracle's metadata view; candidate production
-      remains owned by the typed evaluators below. *)
-
-  val binary_transition_rule : binary_transition -> Rule.t
-  val binary_transition_replacement : binary_transition -> string
-
-  val render_binary_transition :
-    binary_transition -> left:string -> right:string -> string
-  (** Renders through the same registry entry used by the production evaluator,
-      including the short-circuit-preserving Boolean forms. *)
-
-  val if_branch_rule : if_branch_target -> Rule.t
-  (** Projects the rule attached to a typed branch-replacement target. *)
 
   val neutral_return_replacements :
     ?environment:Env.t -> Types.type_expr -> string list

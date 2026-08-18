@@ -16,8 +16,8 @@ schema and a stricter local emitted-surface schema, full SHA-256 stable IDs with
 20-character display prefixes, proof-gated caching, changed-file selection,
 timeout accounting, descendant process cleanup, a process-lifetime interrupt
 subscription that remains active through report publication, and an
-authoritative 30-rule `Operator.Spec` writer guarded by exact
-compatibility-oracle parity.
+authoritative 30-rule `Operator.Spec` writer validated at every typed visit
+site against the exact source bytes it rewrites.
 
 On Windows, cache-root bootstrap, ownership establishment, run-directory and
 reservation-marker creation, marker cleanup, and report publication use

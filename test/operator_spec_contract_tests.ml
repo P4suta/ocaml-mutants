@@ -256,6 +256,24 @@ let test_manifest_aliases_stop_at_abstract_boundaries () =
        ~environment:abstract_environment abstract.Typedtree.exp_type
     = Core.Operator.Spec.Typed_evidence.Other)
 
+(* Ordered equality subsumes size, duplicate, and missing-definition checks: the
+   Spec registry must be exactly the production rule registry. *)
+let test_every_registered_rule_has_one_definition () =
+  let registered_names =
+    List.map Core.Operator.Rule.stable_name Core.Operator.Rule.all
+  in
+  let definition_names =
+    Core.Operator.Spec.For_testing.all_specs ()
+    |> List.map (fun definition ->
+        Core.Operator.Spec.rule definition |> Core.Operator.Rule.stable_name)
+  in
+  Alcotest.(check int)
+    "production registry size" 30
+    (List.length registered_names);
+  Alcotest.(check (list string))
+    "the Spec registry is the ordered production registry" registered_names
+    definition_names
+
 let () =
   Alcotest.run "operator-spec-contract"
     [
@@ -263,6 +281,8 @@ let () =
         [
           Alcotest.test_case "packed registry" `Quick
             test_packed_registry_contract;
+          Alcotest.test_case "every rule has exactly one definition" `Quick
+            test_every_registered_rule_has_one_definition;
           Alcotest.test_case "checked replacement-plan invariants" `Quick
             test_checked_replacement_plan_invariants;
           Alcotest.test_case "source proof and boundaries" `Quick

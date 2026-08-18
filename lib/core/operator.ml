@@ -627,19 +627,6 @@ module Spec = struct
       (fun transition -> transition.definition)
       binary_operator_transitions
 
-  let find_binary_transition ~original =
-    let original = String.trim original in
-    List.find_opt
-      (fun transition -> String.equal transition.original_operator original)
-      binary_transitions
-
-  let binary_transition_rule transition = transition.transition_rule
-  let binary_transition_replacement transition = transition.replacement_operator
-
-  let render_binary_transition transition ~left ~right =
-    render_binary transition.rendering
-      ~replacement:transition.replacement_operator ~left ~right
-
   type condition_evidence = Boolean_condition of { plan : Replacement_plan.t }
 
   let condition_negation_definition =
@@ -765,13 +752,6 @@ module Spec = struct
 
   let if_branch_shadow_specs =
     List.map (fun entry -> entry.branch_definition) if_branch_entries
-
-  let if_branch_rule target =
-    match
-      List.find_opt (fun entry -> entry.target = target) if_branch_entries
-    with
-    | Some entry -> rule entry.branch_definition
-    | None -> invalid_arg "Operator.Spec.if_branch_rule: unregistered target"
 
   type sequence_evidence = Sequence_right of { plan : Replacement_plan.t }
 

@@ -30,11 +30,11 @@ exit policy, and interval-tree instrumentation.
   experimental test descriptions stay isolated from this stable decoder.
 - `Ocaml_frontend` reads `.cmt` files with compiler-libs. It validates resolved
   Stdlib identifiers for operator mutations, typed branch compatibility supplied
-  by the compiler, non-ghost locations, and exact source slices. Its authoritative
-  typed existential `Operator.Spec` registry renders production candidates for
-  all 30 rules. Those separately materialized candidates are committed only
-  after the independently collected compatibility oracle agrees on the complete
-  ordered rule, path, range, source, replacement, digest, and full-ID evidence.
+  by the compiler, non-ghost locations, and exact source slices. The typed
+  existential `Operator.Spec` registry is the single production writer for all
+  30 rules: each typed visit site evaluates the registry once and commits the
+  candidates validated against the exact source bytes, with no second
+  generation path.
 - `Workspace_snapshot` derives copying and fingerprinting from one sorted
   manifest and rejects escaping links, junctions, and special files. Its
   current path-based cleanup is not yet the final adversarial race boundary;

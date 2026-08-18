@@ -21,7 +21,7 @@
   (run %{exe:operator_spec_contract_tests.exe})))
 
 (test
- (name boolean_shadow_parity_contract_tests)
+ (name frontend_discovery_contract_tests)
  (libraries
   ocaml_mutants_core
   ocaml_mutants_engine
@@ -31,33 +31,7 @@
 (rule
  (alias dogfood-fast)
  (action
-  (run %{exe:boolean_shadow_parity_contract_tests.exe})))
-
-(test
- (name binary_shadow_parity_contract_tests)
- (libraries
-  ocaml_mutants_core
-  ocaml_mutants_engine
-  alcotest
-  compiler-libs.common))
-
-(rule
- (alias dogfood-fast)
- (action
-  (run %{exe:binary_shadow_parity_contract_tests.exe})))
-
-(test
- (name boolean_connective_shadow_parity_contract_tests)
- (libraries
-  ocaml_mutants_core
-  ocaml_mutants_engine
-  alcotest
-  compiler-libs.common))
-
-(rule
- (alias dogfood-fast)
- (action
-  (run %{exe:boolean_connective_shadow_parity_contract_tests.exe})))
+  (run %{exe:frontend_discovery_contract_tests.exe})))
 
 (test
  (name config_contract_tests)
@@ -320,58 +294,6 @@
    %{dep:vendor/stryker-mutator/LICENSE}
    %{dep:vendor/stryker-mutator/PROVENANCE.json}
    %{dep:fixtures/reports/mutation-testing-report-v2.json})))
-
-(test
- (name condition_shadow_parity_contract_tests)
- (libraries
-  ocaml_mutants_core
-  ocaml_mutants_engine
-  alcotest
-  compiler-libs.common))
-
-(rule
- (alias dogfood-fast)
- (action
-  (run %{exe:condition_shadow_parity_contract_tests.exe})))
-
-(test
- (name if_branch_shadow_parity_contract_tests)
- (libraries
-  ocaml_mutants_core
-  ocaml_mutants_engine
-  alcotest
-  compiler-libs.common))
-
-(rule
- (alias dogfood-fast)
- (action
-  (run %{exe:if_branch_shadow_parity_contract_tests.exe})))
-
-(test
- (name sequence_shadow_parity_contract_tests)
- (libraries
-  ocaml_mutants_core
-  ocaml_mutants_engine
-  alcotest
-  compiler-libs.common))
-
-(rule
- (alias dogfood-fast)
- (action
-  (run %{exe:sequence_shadow_parity_contract_tests.exe})))
-
-(test
- (name return_shadow_parity_contract_tests)
- (libraries
-  ocaml_mutants_core
-  ocaml_mutants_engine
-  alcotest
-  compiler-libs.common))
-
-(rule
- (alias dogfood-fast)
- (action
-  (run %{exe:return_shadow_parity_contract_tests.exe})))
 
 (rule
  (alias dogfood-full)

@@ -19,6 +19,19 @@ for its CLI, TOML schema, and JSON schema.
   workspace. As a consequence, a malformed `.ocaml-mutants.toml` is now a usage
   error for these commands instead of being silently ignored.
 
+### Changed
+
+- The migration-era shadow oracle is removed from the analysis path: the typed
+  existential `Operator.Spec` registry is now the single production writer,
+  ending the double generation and parity comparison of every candidate. The
+  committed objects were already the Spec-materialized ones, so catalogs, IDs,
+  ordering, and the skip ledger are byte-for-byte unchanged (verified across
+  all fixtures); `rule.abi` and `instrumentation.abi` are unbumped. Inputs
+  whose typed evidence does not own their source bytes now skip as imprecise
+  mappings instead of failing the whole analysis. The parity suites retire
+  with the oracle; their semantic guarantees move to Spec-level registry
+  contracts and serialized-CMT discovery contracts.
+
 ### Added
 
 - A derived mutation score in the terminal summary and the native run report:
@@ -63,8 +76,8 @@ for its CLI, TOML schema, and JSON schema.
   directory creation, publication and captured deletion, plus complete native
   recursive cache/snapshot cleanup authority remain pre-release gates.
 - An authoritative typed existential `Operator.Spec` production writer for all
-  30 versioned rules, with a separately materialized compatibility oracle that
-  proves exact rule, range, source, replacement, digest, and full-ID parity.
+  30 versioned rules, validated at every typed visit site against the exact
+  source bytes it rewrites.
 - `run`, `list`, `report`, `doctor`, `init`, and cache maintenance commands.
 - Windows-native local development and dogfood tasks; Linux and macOS remain
   target platforms pending cross-OS acceptance evidence.

@@ -34,16 +34,15 @@ precedence (for example, `true-to-false@1` over a branch or return replacement),
 so users do not pay for running semantically identical mutants under different
 IDs.
 
-The registry metadata has one authoritative source. The typed existential
-`Operator.Spec` registry now renders the production candidates for all 30
-versioned rules. At each typed visit, the compatibility frontend independently
-collects its validated legacy oracle and compares the complete ordered set of
-rule, path, range, source, replacement, digest, and full-ID fields. Only after
-exact parity succeeds are the separately materialized Spec candidates committed;
-a missing, extra, reordered, rejected, or duplicate candidate is an analysis
-invariant failure, not a skip. The compatibility traversal still preserves the
-reviewed skip precedence and exact-edit family dominance. Spec semantic keys are
-audit evidence and do not drive production deduplication yet.
+The typed existential `Operator.Spec` registry is the single production writer
+for all 30 versioned rules. At each typed visit site the frontend evaluates the
+registry, validates every candidate against the exact source bytes, and commits
+the validated mutants directly; there is no second generation path. A candidate
+whose typed evidence does not own its source slice is skipped as an imprecise
+mapping, while a candidate that cannot be validated against the source it was
+derived from is an analysis invariant failure, not a skip. The traversal
+preserves the reviewed skip precedence and exact-edit family dominance. Spec
+semantic keys are audit evidence and do not drive production deduplication yet.
 
 Adding an operator requires a new constructor, a stable public name, a version,
 Typedtree evidence, source-preservation tests, and focused documentation. There
