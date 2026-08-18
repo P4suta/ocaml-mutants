@@ -13,11 +13,12 @@ permissions:
 env:
   OPAMRETRIES: "3"
 
-# A superseded run on the same ref only wastes runner minutes; completed
-# history on main stays intact.
+# One run per ref: a newer push supersedes and cancels the older run, so a
+# wedged job can never hold the whole queue hostage behind the group (a hung
+# Windows suite did exactly that once).
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 jobs:
   # Classifies the change so documentation-only pushes skip the OCaml jobs.
