@@ -2347,25 +2347,34 @@ let test_process_capture_and_timeout () =
   Fun.protect
     ~finally:(fun () -> try Sys.remove marker with Sys_error _ -> ())
     (fun () ->
-      let tree =
-        Engine.Process_supervisor.run ~timeout:0.2 ~cwd:(Sys.getcwd ())
-          ~env:
-            [
-              ("OCAML_MUTANTS_TEST_CHILD", Some "grandchild");
-              ("OCAML_MUTANTS_TEST_GRANDCHILD_PID", Some marker);
-            ]
-          [ executable ]
-      in
-      (match tree.status with
-      | Engine.Process_supervisor.Timed_out -> ()
-      | status ->
-          Alcotest.failf "grandchild tree returned %s"
-            (Engine.Process_supervisor.status_string status));
-      let pid =
+      (* The tree is killed at the timeout, which can win the race against the
+         child's marker write on a loaded runner; an empty marker means the
+         scenario never armed, so it retries instead of failing on thin air. *)
+      let rec spawn_tree attempts =
+        let tree =
+          Engine.Process_supervisor.run ~timeout:2. ~cwd:(Sys.getcwd ())
+            ~env:
+              [
+                ("OCAML_MUTANTS_TEST_CHILD", Some "grandchild");
+                ("OCAML_MUTANTS_TEST_GRANDCHILD_PID", Some marker);
+              ]
+            [ executable ]
+        in
+        (match tree.status with
+        | Engine.Process_supervisor.Timed_out -> ()
+        | status ->
+            Alcotest.failf "grandchild tree returned %s"
+              (Engine.Process_supervisor.status_string status));
         match Engine.Util.read_file marker with
-        | Ok value -> int_of_string (String.trim value)
+        | Ok value when String.trim value <> "" ->
+            int_of_string (String.trim value)
+        | Ok _ when attempts > 1 -> spawn_tree (attempts - 1)
+        | Ok _ ->
+            Alcotest.fail
+              "grandchild marker was never written before the tree timeout"
         | Error message -> Alcotest.fail message
       in
+      let pid = spawn_tree 3 in
       let started = Unix.gettimeofday () in
       while
         Engine.Process_supervisor.process_is_alive pid
@@ -2381,6 +2390,9 @@ let test_cache_never_returns_unproven_outcomes () =
   let directory = Filename.temp_file "ocaml-mutants-cache-test-" ".tmp" in
   Sys.remove directory;
   Unix.mkdir directory 0o700;
+  (* Resolved: the OS temp prefix may itself be a symlink (macOS /var, /tmp),
+     which the capability walk refuses to follow. *)
+  let directory = Unix.realpath directory in
   Fun.protect
     ~finally:(fun () -> ignore (Engine.Util.remove_tree directory))
     (fun () ->
@@ -2463,6 +2475,7 @@ let test_cache_ownership_and_concurrency () =
   let parent = Filename.temp_file "ocaml-mutants-cache-roots-" ".tmp" in
   Sys.remove parent;
   Unix.mkdir parent 0o700;
+  let parent = Unix.realpath parent in
   Fun.protect
     ~finally:(fun () -> ignore (Engine.Util.remove_tree parent))
     (fun () ->

@@ -56,6 +56,9 @@ let with_layout action =
   let parent = Filename.temp_file "ocaml-mutants-reservation-" ".tmp" in
   Sys.remove parent;
   create_directory parent;
+  (* Resolved: the OS temp prefix may itself be a symlink (macOS /var, /tmp),
+     which the capability walk refuses to follow. *)
+  let parent = Unix.realpath parent in
   Fun.protect
     ~finally:(fun () -> ignore (Engine.Util.remove_tree parent))
     (fun () ->
@@ -71,6 +74,7 @@ let with_fault_layout ?next_reservation_sequence fail action =
   let parent = Filename.temp_file "ocaml-mutants-publication-" ".tmp" in
   Sys.remove parent;
   create_directory parent;
+  let parent = Unix.realpath parent in
   Fun.protect
     ~finally:(fun () -> ignore (Engine.Util.remove_tree parent))
     (fun () ->
@@ -548,6 +552,7 @@ let test_bootstrap_postcommit_failure_recovers_only_empty_root () =
   let parent = Filename.temp_file "ocaml-mutants-bootstrap-fault-" ".tmp" in
   Sys.remove parent;
   create_directory parent;
+  let parent = Unix.realpath parent in
   Fun.protect
     ~finally:(fun () ->
       reset_native_internal_fault ();

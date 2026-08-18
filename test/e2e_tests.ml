@@ -84,7 +84,10 @@ let match_balanced_full_ids =
    owned temporary cache root. The store materializes at most one new path
    component, so the default root's parent is pre-created. *)
 let store_env =
-  let root = Filename.temp_dir ~perms:0o700 "ocaml-mutants-e2e-store-" ".tmp" in
+  let root =
+    Filename.temp_dir ~perms:0o700 "ocaml-mutants-e2e-store-" ".tmp"
+    |> Unix.realpath
+  in
   Unix.mkdir (Filename.concat root "ocaml-mutants") 0o700;
   at_exit (fun () -> ignore (Util.remove_tree root));
   [ ((if Sys.win32 then "LOCALAPPDATA" else "XDG_CACHE_HOME"), Some root) ]
