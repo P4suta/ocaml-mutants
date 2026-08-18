@@ -48,6 +48,9 @@ let with_layout action =
   let parent = Filename.temp_file "ocaml-mutants-maintenance-" ".tmp" in
   Sys.remove parent;
   create_directory parent;
+  (* Resolved: the OS temp prefix may itself be a symlink (macOS /var, /tmp),
+     which the capability walk refuses to follow. *)
+  let parent = Unix.realpath parent in
   Fun.protect
     ~finally:(fun () -> ignore (Engine.Util.remove_tree parent))
     (fun () ->
@@ -763,6 +766,7 @@ let test_workspace_less_maintenance_uses_cwd_boundary () =
   let parent = Filename.temp_file "ocaml-mutants-maintenance-global-" ".tmp" in
   Sys.remove parent;
   create_directory parent;
+  let parent = Unix.realpath parent in
   Fun.protect
     ~finally:(fun () -> ignore (Engine.Util.remove_tree parent))
     (fun () ->
