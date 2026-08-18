@@ -53,10 +53,10 @@ let policy =
     readiness_deadline =
       Positive_seconds.make_exn ~name:"readiness deadline" 240.;
     shutdown_deadline = Positive_seconds.make_exn ~name:"shutdown deadline" 60.;
-    (* Sixty seconds, aligned with the shutdown deadline: loaded CI runners
-       take longer than 15 seconds to tear down the interrupted Job tree. The
-       passing path polls every 10ms and exits as soon as the tree is gone, so
-       this budget only lengthens genuine failures, never green runs. *)
+    (* Sixty seconds, aligned with the shutdown deadline: loaded CI runners take
+       longer than 15 seconds to tear down the interrupted Job tree. The passing
+       path polls every 10ms and exits as soon as the tree is gone, so this
+       budget only lengthens genuine failures, never green runs. *)
     cleanup_deadline = Positive_seconds.make_exn ~name:"cleanup deadline" 60.;
     observation_interval =
       Positive_seconds.make_exn ~name:"observation interval" 0.01;
