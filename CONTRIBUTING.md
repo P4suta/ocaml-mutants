@@ -27,7 +27,13 @@ On other systems, create an OCaml 5.4 or 5.5 opam switch and run `opam install .
 - Treat new config and JSON fields as compatibility work and update the schemas.
 - Do not add an operator without Typedtree/type evidence and a stable version.
 
-Keep commits focused and use imperative, conventional commit messages. By
+CI enforces the same pinned gates as `mise run check`: build, tests,
+`@dogfood-fast`, formatting, docs, opam lint, typos, taplo, actionlint, and
+committed, plus a Balanced self-catalog determinism job. `mise run hooks`
+installs the matching pre-commit and commit-msg hooks.
+
+Keep commits focused and use imperative commit messages: subjects of at most
+72 characters (80 is the hard `committed.toml` ceiling), wrapped bodies. By
 contributing, you agree that your work may be distributed under
 `MIT OR Apache-2.0`.
 

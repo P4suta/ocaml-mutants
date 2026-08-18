@@ -1,0 +1,7 @@
+# Commit-message policy enforced by `committed` (lefthook commit-msg hook and
+# the CI lint job). Aim for subjects of at most 72 characters; 80 is the hard
+# ceiling so the gate stays green over the existing history.
+subject_length = 80
+line_length = 100
+style = "none"
+merge_commit = false

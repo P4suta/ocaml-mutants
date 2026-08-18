@@ -6,3 +6,9 @@ csexp = "csexp"
 Typedtree = "Typedtree"
 
 Tast = "Tast"
+# OCaml bytecode object file extension.
+cmo = "cmo"
+
+[default.extend-identifiers]
+# Verbatim Windows error-constant name; the misspelling is Microsoft's.
+ERROR_FILENAME_EXCED_RANGE = "ERROR_FILENAME_EXCED_RANGE"

@@ -8,4 +8,11 @@ pre-commit:
     toml:
       glob: "*.toml"
       run: taplo check {staged_files}
+    workflows:
+      glob: ".github/workflows/*.yml"
+      run: actionlint
 
+commit-msg:
+  commands:
+    committed:
+      run: committed --commit-file {1}

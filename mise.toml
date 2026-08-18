@@ -96,6 +96,22 @@ run_windows = 'set "PATH=%LOCALAPPDATA%\opam\.cygwin\root\bin;%PATH%" && opam ex
 description = "Validate opam package metadata"
 run = "opam lint ocaml-mutants.opam"
 
+[tasks.spellcheck]
+description = "Check spelling with the pinned typos"
+run = "typos"
+
+[tasks.toml-lint]
+description = "Check every tracked TOML file with the pinned taplo"
+run = "taplo check mise.toml .ocaml-mutants.toml .typos.toml committed.toml scripts/corpus-v1.toml"
+
+[tasks.action-lint]
+description = "Check the GitHub Actions workflows with the pinned actionlint"
+run = "actionlint"
+
+[tasks.commit-lint]
+description = "Check the tip commit message with the pinned committed"
+run = "committed HEAD~..HEAD"
+
 [tasks.install-check]
 description = "Build and verify the intentionally narrow install surface"
 run = [
@@ -112,9 +128,13 @@ description = "Run the local release-readiness checks sequentially"
 run = [
   "mise run build",
   "mise run test",
+  "mise run dogfood-fast",
   "mise run fmt",
   "mise run doc",
   "mise run lint",
+  "mise run spellcheck",
+  "mise run toml-lint",
+  "mise run action-lint",
   "mise run install-check",
   "mise run corpus-check",
   "mise run corpus-unit",

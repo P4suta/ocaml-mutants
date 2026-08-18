@@ -42,6 +42,19 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Added
 
+- CI now enforces the pinned quality gates it previously only documented. A
+  lint job runs typos, taplo, actionlint, and committed (via mise, so CI and
+  local runs share one pinned toolchain); every matrix job runs
+  `@dogfood-fast`; a `dogfood-list` job proves Balanced self-catalog
+  determinism; Python is pinned through `requirements-dev.txt` everywhere; the
+  installed-schema check covers all three schemas; and every action is pinned
+  by commit SHA. A tag-triggered release workflow verifies the
+  tag/`dune-project`/CLI version agreement, replays the gates, and drafts a
+  GitHub release — publishing stays manual behind the release checklist.
+  Locally, `mise run check` gains the same spelling/TOML/workflow gates, a
+  commit-msg hook runs committed (subject hard cap 80, aim 72, per
+  `committed.toml`), and `justfile` works on POSIX shells instead of requiring
+  pwsh. Dependabot watches the pinned actions and Python requirement.
 - Two operator families for OCaml's pattern-matching core, both in the
   Balanced tier. `match-arm` (8 rules, `match-arm-unit@1` …
   `match-arm-none@1`) replaces every match/try arm RHS with the neutral value

@@ -7,9 +7,12 @@
 - [ ] `dune runtest`
 - [ ] `dune build @fmt`
 - [ ] `dune build @doc`
-- [ ] Run `typos`, `taplo check` over every repository TOML file, and
-  `actionlint .github/workflows/ci.yml`
-- [ ] Run `committed` over the release commit range and review every failure
+- [ ] Confirm the CI lint job (typos, taplo over every tracked TOML file,
+  actionlint over every workflow, committed over the commit range) is green
+  for the release commit; `mise run check` runs the same spelling/TOML/workflow
+  gates locally
+- [ ] Confirm the CI `dogfood-list` determinism job and per-matrix
+  `@dogfood-fast` are green for the release commit
 - [ ] Build and install the opam package in a clean switch
 - [ ] Confirm the installed `ocaml-mutants --version`, `dune-project` version,
   release notes, tag, and opam release version all agree exactly

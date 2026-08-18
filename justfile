@@ -1,4 +1,4 @@
-set shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
+set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
 bootstrap:
     mise run bootstrap
@@ -11,4 +11,3 @@ test:
 
 check:
     mise run check
-

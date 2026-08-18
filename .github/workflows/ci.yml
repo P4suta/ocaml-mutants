@@ -10,6 +10,28 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: 2026.8.6
+          install_args: typos taplo actionlint committed
+      - run: typos
+      - run: >-
+          taplo check mise.toml .ocaml-mutants.toml .typos.toml committed.toml
+          scripts/corpus-v1.toml
+      - run: actionlint
+      - name: committed (pull request range)
+        if: github.event_name == 'pull_request'
+        run: committed ${{ github.event.pull_request.base.sha }}..HEAD
+      - name: committed (pushed head)
+        if: github.event_name != 'pull_request'
+        run: committed HEAD~..HEAD
+
   test:
     strategy:
       fail-fast: false
@@ -18,15 +40,19 @@ jobs:
         ocaml: ["5.4.1", "5.5.0"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: ocaml/setup-ocaml@v3
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+      - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
           dune-cache: true
-      - run: python -m pip install jsonschema==4.26.0
+      - run: python -m pip install --requirement requirements-dev.txt
       - run: opam install . --deps-only --with-test --with-doc
       - run: opam exec -- dune build @all
       - run: opam exec -- dune runtest
+      - run: opam exec -- dune build @dogfood-fast
       - run: opam exec -- dune build @fmt
       - run: opam exec -- dune build @doc
       - run: opam exec -- dune build @install
@@ -35,30 +61,53 @@ jobs:
   dune-minimum:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: ocaml/setup-ocaml@v3
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+      - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
         with:
           ocaml-compiler: "5.4.1"
           dune-cache: true
       - run: opam pin add dune 3.21.0 -y
-      - run: python -m pip install jsonschema==4.26.0
+      - run: python -m pip install --requirement requirements-dev.txt
       - run: opam install . --deps-only --with-test --with-doc
       - run: opam exec -- dune build @all @fmt @doc @install
       - run: opam exec -- dune runtest
+      - run: opam exec -- dune build @dogfood-fast
+
+  dogfood-list:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+      - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
+        with:
+          ocaml-compiler: "5.5.0"
+          dune-cache: true
+      - run: opam install . --deps-only
+      - name: Deterministic self-catalog (twice, byte-identical)
+        run: opam exec -- sh scripts/dogfood-list.sh
 
   package-install:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: ocaml/setup-ocaml@v3
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+      - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
         with:
           ocaml-compiler: "5.5.0"
           dune-cache: true
-      - run: python -m pip install jsonschema==4.26.0
+      - run: python -m pip install --requirement requirements-dev.txt
       - run: opam install . --deps-only --with-test --with-doc
       - run: opam install . --with-test --with-doc
       - run: opam exec -- ocaml-mutants --version
       - run: test -f "$(opam var share)/ocaml-mutants/run-report-v1.schema.json"
       - run: test -f "$(opam var share)/ocaml-mutants/catalog-v1.schema.json"
+      - run: test -f "$(opam var share)/ocaml-mutants/mutation-testing-report-v2.schema.json"
       - run: test -f "$(opam var share)/ocaml-mutants/json-schema.md"
       - run: test -z "$(find "$(opam var lib)/ocaml-mutants" -name '*.cmi' -print -quit)"
