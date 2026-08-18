@@ -9,6 +9,8 @@ module Family : sig
     | If_branch
     | Sequence_deletion
     | Return_replacement
+    | Match_arm
+    | Constructor_replacement
 
   val all : t list
   val name : t -> string
@@ -35,6 +37,8 @@ type t = Family.t =
   | If_branch
   | Sequence_deletion
   | Return_replacement
+  | Match_arm
+  | Constructor_replacement
 
 module Rule : sig
   type t
@@ -185,6 +189,18 @@ module Spec : sig
       shape. Typed refutation-case RHS nodes are explicitly not applicable.
       Manifest aliases are normalized only through the typed environment. *)
 
+  val evaluate_match_arm :
+    source_bytes:string -> Typedtree.expression -> evaluation list
+  (** Evaluates the neutral body replacements for one match or try arm RHS.
+      Shares the return-replacement type evidence: typed refutation-case RHS
+      nodes are not applicable and identity replacements are excluded. *)
+
+  val evaluate_constructor_replacement :
+    source_bytes:string -> Typedtree.expression -> evaluation list
+  (** Evaluates the fixed constructor swaps ([Some e] to [None], [head :: tail]
+      to [[]]) after proving the typed constructor resolves to the Stdlib option
+      or list type; same-named user constructors are excluded. *)
+
   module For_testing : sig
     val all_specs : unit -> packed list
     (** The single ordered built-in registry. Public rule metadata and the
@@ -201,6 +217,8 @@ module Spec : sig
     val if_branch_specs : unit -> packed list
     val sequence_deletion_specs : unit -> packed list
     val return_replacement_specs : unit -> packed list
+    val match_arm_specs : unit -> packed list
+    val constructor_replacement_specs : unit -> packed list
     val visit_site_name : packed -> string
     val binary_original_invariant_errors : string list -> string list
     val if_branch_target_invariant_errors : if_branch_target list -> string list

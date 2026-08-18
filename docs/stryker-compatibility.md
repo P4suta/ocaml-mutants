@@ -117,12 +117,13 @@ shifted caret after non-ASCII text. Mutator names map as follows:
 | OCaml operator family | `mutatorName` |
 | --- | --- |
 | Boolean literal | `BooleanLiteral` |
-| Condition negation, if branch | `ConditionalExpression` |
+| Condition negation, if branch, match arm | `ConditionalExpression` |
 | Boolean connective | `LogicalOperator` |
 | Comparison | `EqualityOperator` |
 | Integer or float arithmetic | `ArithmeticOperator` |
 | Sequence deletion | `BlockStatement` |
 | Return replacement | `ReturnValue` |
+| Constructor replacement | `ConstructorReplacement` |
 
 Before emission, each source file is read exactly once. Its digest must equal
 the source digest in every corresponding native mutant, and every recorded byte

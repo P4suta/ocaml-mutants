@@ -51,6 +51,33 @@ let basic_balanced_full_ids =
     "0a0ffbf506a46574324730f602f2301286516a85c0c69dbdb3af15359124ab9d";
   ]
 
+(** Source-stable behavioral golden for [fixtures/match]: the match-arm and
+    constructor-replacement families alongside the families they dedup against.
+    Review every update as an operator-contract change. *)
+let match_balanced_full_ids =
+  [
+    "d4770d39233c8e81361db88483f0e4536a82a43562c6ef6194e7065edb995411";
+    "018411885ee6268ded1eb6679fd98596a6b9a57e842f054f75e5982db1d4dd38";
+    "c47c3f27a837c0a6473820302e8d046cc1517fb476486f206dd85007ee2bc9cf";
+    "fa3d50e80926585e62853f50c41cb2bd5cf163266216132b48530e724082e7d7";
+    "a1f7a31423295ced4b382a627d0fca57f7b717c253c1ea3db7535ed284e58915";
+    "ece8ba42e422ee2aae70df677fb80a9ed30ec5fb3f3b3252dc93b932e9a1f55d";
+    "efbe244aa4c2d354863246db7b32e6b11378db6156a9ca5198f66444ac710939";
+    "4926593a339de416fd9ce4646b0097fa374c3947d893ed80878f888706119a98";
+    "64a02794707673aba42d5c670075b3162bf8eee5fbd81594f765a09a25d96b0d";
+    "0ada025f39ffed5c63587d541d590797faa192fbb751bc8c95e0147cc4107a2c";
+    "0c0418b19bc301942117877cdd63eb4e59c8d5e8b36a380a47691658ead38755";
+    "a69b3ae15ed2faa879d3d529500edd6e847f86c1b18b3c3075f7c75112f73753";
+    "6754fd83d16743733a92c433354da0a572bb6c2309f0736330b73b0433f703f6";
+    "0ebae2df544724bf1d5ca7e367619f498173a6f3edee29d928b1fca9fa457d9c";
+    "3c734eb2cb58df0e238b35766176be86b7e36b55a0080f0a19aee4548ce2f5a2";
+    "2626e2dc33538beecd41fc348958ebee8763c3e656045158eda82615bbc9ed54";
+    "4eb8901845841e0799ebf7e64ab19c9d26e723791b204c6e3cbec8e827252128";
+    "b085853df07f190390a2b0cefdb31f621af2b9d6391d158322dd5fd1dc8ef81c";
+    "f08a9bd3d7664328cd690f160c8e64695dfdaeae6c898aa0bcec8ec09be5f3bd";
+    "993a44e2c0b48f91b01f805734e6cbd4d859b8220814dcb38ff09a55fbddcee5";
+  ]
+
 let check_list ~cli fixture_project =
   let fixture = Filename.dirname fixture_project |> Unix.realpath in
   let before =
@@ -97,6 +124,45 @@ let check_list ~cli fixture_project =
   else if fixture_name = "ppx" then (
     if mutants = [] then
       fail "byte-exact preprocessor output was not reverse-mapped")
+  else if fixture_name = "match" then (
+    let full_ids =
+      List.map
+        (fun mutant ->
+          Yojson.Safe.Util.(mutant |> member "full_id" |> to_string))
+        mutants
+    in
+    if full_ids <> match_balanced_full_ids then
+      fail
+        "match fixture Balanced catalog changed; review this as an explicit \
+         operator-contract change";
+    let rules =
+      List.map
+        (fun mutant -> Yojson.Safe.Util.(mutant |> member "rule" |> to_string))
+        mutants
+    in
+    List.iter
+      (fun expected ->
+        if not (List.mem expected rules) then
+          fail "match fixture omitted rule %s" expected)
+      [
+        "match-arm-empty-string@1";
+        "match-arm-none@1";
+        "some-to-none@1";
+        "cons-to-nil@1";
+      ];
+    (* The exact-edit ties must keep their historical winners: the arm [Some
+       value] belongs to match-arm-none and the list-typed body to
+       return-empty-list, with the losers explained as duplicates. *)
+    let duplicate_skip =
+      List.find_opt
+        (fun skip ->
+          let open Yojson.Safe.Util in
+          skip |> member "reason" |> to_string
+          = "duplicate source transformation")
+        skips
+    in
+    if duplicate_skip = None then
+      fail "match fixture dedup losers were not explained in catalog skips")
   else if fixture_name = "root-test" then (
     if mutants = [] then fail "root-test fixture produced no production mutants";
     List.iter
@@ -342,6 +408,35 @@ let check_timeout ~cli fixture_project =
   if json |> member "summary" |> member "timeout" |> to_int = 0 then
     fail "timeout run did not record a timeout outcome"
 
+(* The match fixture has no tests, so every mutant trivially survives: the run
+   proves the instrumented tree (match/try arms and constructor swaps included)
+   still compiles under the default fatal-warning dev profile, and pins the
+   all-survivors score at exactly 0. *)
+let check_match_run ~cli fixture_project =
+  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let process =
+    Process_supervisor.run ~timeout:600. ~cwd:fixture ~env:[]
+      [ cli; "run"; "."; "--json"; "--fresh"; "--jobs"; "1" ]
+  in
+  (match process.status with
+  | Process_supervisor.Exited 1 -> ()
+  | _ ->
+      fail "match run E2E returned %s:\n%s%s"
+        (Process_supervisor.status_string process.status)
+        process.stdout process.stderr);
+  let json = parse_json "match run report" process in
+  let open Yojson.Safe.Util in
+  if json |> member "status" |> to_string <> "completed" then
+    fail "match run did not complete";
+  let summary = json |> member "summary" in
+  let expected = List.length match_balanced_full_ids in
+  if summary |> member "executed" |> to_int <> expected then
+    fail "match run did not execute the complete Balanced catalog";
+  if summary |> member "unexpected_survivors" |> to_int <> expected then
+    fail "match run without tests did not report every mutant as surviving";
+  if summary |> member "score" |> to_float <> 0.0 then
+    fail "match run without tests did not score exactly zero"
+
 let check_baseline_failure ~cli fixture_project =
   let fixture = Filename.dirname fixture_project |> Unix.realpath in
   let explicit_timeout_seconds = 17. in
@@ -484,6 +579,10 @@ let run () =
   |> List.find_opt (fun project ->
       Filename.basename (Filename.dirname project) = "baseline-failure")
   |> Option.iter (check_baseline_failure ~cli);
+  fixtures
+  |> List.find_opt (fun project ->
+      Filename.basename (Filename.dirname project) = "match")
+  |> Option.iter (check_match_run ~cli);
   fixtures
   |> List.find_opt (fun project ->
       Filename.basename (Filename.dirname project) = "basic")

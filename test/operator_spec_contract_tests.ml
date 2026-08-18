@@ -171,6 +171,8 @@ let test_typed_visit_sites_are_disjoint () =
         | Core.Operator.If_branch -> "full-if-branch-target"
         | Core.Operator.Sequence_deletion -> "sequence-expression"
         | Core.Operator.Return_replacement -> "function-body-return"
+        | Core.Operator.Match_arm -> "match-arm"
+        | Core.Operator.Constructor_replacement -> "constructor-application"
       in
       Alcotest.(check string)
         (Core.Operator.Rule.stable_name rule ^ " visit site")
@@ -268,7 +270,7 @@ let test_every_registered_rule_has_one_definition () =
         Core.Operator.Spec.rule definition |> Core.Operator.Rule.stable_name)
   in
   Alcotest.(check int)
-    "production registry size" 30
+    "production registry size" 40
     (List.length registered_names);
   Alcotest.(check (list string))
     "the Spec registry is the ordered production registry" registered_names
@@ -284,7 +286,8 @@ let test_family_profile_tiers () =
     | Core.Operator.Boolean_literal | Core.Operator.Condition_negation
     | Core.Operator.Boolean_connective | Core.Operator.Comparison
     | Core.Operator.Integer_arithmetic | Core.Operator.Float_arithmetic
-    | Core.Operator.Return_replacement ->
+    | Core.Operator.Return_replacement | Core.Operator.Match_arm
+    | Core.Operator.Constructor_replacement ->
         Core.Operator.Profile.Balanced
   in
   List.iter

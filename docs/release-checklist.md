@@ -37,12 +37,12 @@
 - [ ] Generate the current repository's Balanced catalog twice through an
   external stage-0 binary and compare canonical JSON plus the ordered full-ID
   sequence
-- [ ] Compare the fixed `fixtures/basic` Balanced catalog with its reviewed
-  31-full-ID golden; use this source-stable gate, not a cross-version
-  self-catalog hash, to detect operator semantic drift
-- [ ] Run the production/compatibility parity contracts for all 30
-  `Operator.Spec` rules and reject any missing, extra, reordered, rejected, or
-  duplicate candidate
+- [ ] Compare the fixed `fixtures/basic` and `fixtures/match` Balanced
+  catalogs with their reviewed full-ID goldens; use these source-stable gates,
+  not a cross-version self-catalog hash, to detect operator semantic drift
+- [ ] Run the registry and discovery contracts for all 40 `Operator.Spec`
+  rules: exactly one definition per registered rule, the pinned
+  family-to-profile tier map, and the serialized-CMT discovery suite
 - [ ] Run against a dirty workspace and compare every file digest and Git status
 - [ ] Verify cache reuse, corrupt-entry misses, concurrent writes, and
   source/config/toolchain/environment invalidation

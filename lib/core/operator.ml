@@ -9,6 +9,8 @@ module Family = struct
     | If_branch
     | Sequence_deletion
     | Return_replacement
+    | Match_arm
+    | Constructor_replacement
 
   let all =
     [
@@ -21,6 +23,8 @@ module Family = struct
       If_branch;
       Sequence_deletion;
       Return_replacement;
+      Match_arm;
+      Constructor_replacement;
     ]
 
   let name = function
@@ -33,6 +37,8 @@ module Family = struct
     | If_branch -> "if-branch"
     | Sequence_deletion -> "sequence-deletion"
     | Return_replacement -> "return-replacement"
+    | Match_arm -> "match-arm"
+    | Constructor_replacement -> "constructor-replacement"
 
   let of_string value =
     match
@@ -83,6 +89,8 @@ type t = Family.t =
   | If_branch
   | Sequence_deletion
   | Return_replacement
+  | Match_arm
+  | Constructor_replacement
 
 type rule = {
   family : Family.t;
@@ -273,6 +281,11 @@ module Spec = struct
   type function_body_return_input =
     | Function_body_return_input of Typedtree.expression
 
+  type match_arm_input = Match_arm_input of Typedtree.expression
+
+  type constructor_application_input =
+    | Constructor_application_input of Typedtree.expression
+
   type _ visit_site =
     | Boolean_literal_site : boolean_literal_input visit_site
     | Condition_site : condition_input visit_site
@@ -280,6 +293,8 @@ module Spec = struct
     | Full_if_branch_site : full_if_branch_input visit_site
     | Sequence_expression_site : sequence_expression_input visit_site
     | Function_body_return_site : function_body_return_input visit_site
+    | Match_arm_site : match_arm_input visit_site
+    | Constructor_application_site : constructor_application_input visit_site
 
   type rejection =
     | Source_bytes_mismatch of { expected : string; actual : string }
@@ -319,6 +334,8 @@ module Spec = struct
     | Full_if_branch_site -> "full-if-branch-target"
     | Sequence_expression_site -> "sequence-expression"
     | Function_body_return_site -> "function-body-return"
+    | Match_arm_site -> "match-arm"
+    | Constructor_application_site -> "constructor-application"
 
   let rejection_name (Source_bytes_mismatch _) = "source-bytes-mismatch"
 
@@ -822,17 +839,20 @@ module Spec = struct
     return_definition : packed;
   }
 
-  let return_definition ~name ~primitive ~replacement =
-    let rule =
-      make_rule ~family:Family.Return_replacement ~name ~version:1
-        ~profile:Profile.Balanced
-    in
+  (* Shared generator for the two neutral-value body families: replace a typed
+     body expression (a stable function-body root or a match/try arm RHS) with
+     the neutral literal of its primitive result type. *)
+  let neutral_body_definition (type input) ~(visit_site : input visit_site)
+      ~(unwrap : input -> Typedtree.expression) ~family ~profile ~name
+      ~primitive ~replacement =
+    let rule = make_rule ~family ~name ~version:1 ~profile in
     let compatibility = Replacement_is replacement in
     let semantic_key =
       Replacement_plan.require_key ~context:(rule_stable_name rule)
         ("replacement:" ^ replacement)
     in
-    let applicable ~source_bytes (Function_body_return_input expression) =
+    let applicable ~source_bytes input =
+      let expression = unwrap input in
       match expression.Typedtree.exp_desc with
       | Typedtree.Texp_unreachable -> Not_applicable
       | _ -> (
@@ -853,7 +873,7 @@ module Spec = struct
             | _ -> false
           then Not_applicable
           else if not (parse_expression source_bytes) then
-            invalid_source ~expected:"a byte-exact typed return expression"
+            invalid_source ~expected:"a byte-exact typed body expression"
               source_bytes
           else
             match
@@ -862,21 +882,22 @@ module Spec = struct
             with
             | Ok plan -> Applicable (Neutral_return { plan })
             | Error message ->
-                invalid_source ~expected:"a non-empty byte-exact typed return"
+                invalid_source ~expected:"a non-empty byte-exact typed body"
                   (message ^ ": " ^ source_bytes))
     in
     let render (Neutral_return { plan }) = plan in
-    let return_definition =
-      Pack
-        {
-          rule;
-          compatibility;
-          visit_site = Function_body_return_site;
-          applicable;
-          render;
-        }
-    in
-    { primitive; neutral_replacement = replacement; return_definition }
+    Pack { rule; compatibility; visit_site; applicable; render }
+
+  let return_definition ~name ~primitive ~replacement =
+    {
+      primitive;
+      neutral_replacement = replacement;
+      return_definition =
+        neutral_body_definition ~visit_site:Function_body_return_site
+          ~unwrap:(fun (Function_body_return_input expression) -> expression)
+          ~family:Family.Return_replacement ~profile:Profile.Balanced ~name
+          ~primitive ~replacement;
+    }
 
   let return_replacement_entries =
     [
@@ -905,6 +926,89 @@ module Spec = struct
         if entry.primitive = primitive then Some entry.neutral_replacement
         else None)
 
+  let match_arm_definition ~name ~primitive ~replacement =
+    neutral_body_definition ~visit_site:Match_arm_site
+      ~unwrap:(fun (Match_arm_input expression) -> expression)
+      ~family:Family.Match_arm ~profile:Profile.Balanced ~name ~primitive
+      ~replacement
+
+  let match_arm_shadow_specs =
+    [
+      match_arm_definition ~name:"match-arm-unit" ~primitive:Unit
+        ~replacement:"()";
+      match_arm_definition ~name:"match-arm-false" ~primitive:Bool
+        ~replacement:"false";
+      match_arm_definition ~name:"match-arm-true" ~primitive:Bool
+        ~replacement:"true";
+      match_arm_definition ~name:"match-arm-zero" ~primitive:Int
+        ~replacement:"0";
+      match_arm_definition ~name:"match-arm-float-zero" ~primitive:Float
+        ~replacement:"0.0";
+      match_arm_definition ~name:"match-arm-empty-string" ~primitive:String
+        ~replacement:"\"\"";
+      match_arm_definition ~name:"match-arm-empty-list" ~primitive:List
+        ~replacement:"[]";
+      match_arm_definition ~name:"match-arm-none" ~primitive:Option
+        ~replacement:"None";
+    ]
+
+  type constructor_evidence =
+    | Constructor_swap of { plan : Replacement_plan.t }
+
+  let constructor_definition ~name ~constructor_name ~argument_count ~primitive
+      ~replacement =
+    let rule =
+      make_rule ~family:Family.Constructor_replacement ~name ~version:1
+        ~profile:Profile.Balanced
+    in
+    let compatibility = Replacement_is replacement in
+    let semantic_key =
+      Replacement_plan.require_key ~context:(rule_stable_name rule)
+        ("replacement:" ^ replacement)
+    in
+    let applicable ~source_bytes (Constructor_application_input expression) =
+      match expression.Typedtree.exp_desc with
+      | Typedtree.Texp_construct (_, constructor, arguments)
+        when String.equal constructor.cstr_name constructor_name
+             && List.length arguments = argument_count
+             && Typed_evidence.primitive
+                  ~environment:expression.Typedtree.exp_env expression.exp_type
+                = primitive -> (
+          if String.equal source_bytes replacement then Not_applicable
+          else if not (parse_expression source_bytes) then
+            invalid_source
+              ~expected:"a byte-exact typed constructor application"
+              source_bytes
+          else
+            match
+              Replacement_plan.create_with_key ~source_bytes
+                ~replacement_bytes:replacement ~key:semantic_key
+            with
+            | Ok plan -> Applicable (Constructor_swap { plan })
+            | Error message ->
+                invalid_source
+                  ~expected:"a non-empty byte-exact constructor application"
+                  (message ^ ": " ^ source_bytes))
+      | _ -> Not_applicable
+    in
+    let render (Constructor_swap { plan }) = plan in
+    Pack
+      {
+        rule;
+        compatibility;
+        visit_site = Constructor_application_site;
+        applicable;
+        render;
+      }
+
+  let constructor_replacement_shadow_specs =
+    [
+      constructor_definition ~name:"some-to-none" ~constructor_name:"Some"
+        ~argument_count:1 ~primitive:Option ~replacement:"None";
+      constructor_definition ~name:"cons-to-nil" ~constructor_name:"::"
+        ~argument_count:2 ~primitive:List ~replacement:"[]";
+    ]
+
   let registry =
     [
       boolean_literal_shadow_specs;
@@ -914,6 +1018,8 @@ module Spec = struct
       if_branch_shadow_specs;
       sequence_deletion_shadow_specs;
       return_replacement_shadow_specs;
+      match_arm_shadow_specs;
+      constructor_replacement_shadow_specs;
     ]
     |> List.concat
 
@@ -923,6 +1029,9 @@ module Spec = struct
      precedence. Keeping the policy beside the only rule registry prevents the
      frontend traversal from becoming an independent source of operator
      dominance. *)
+  (* The two newest families sit at the tail so every pre-existing winner of
+     an exact-edit tie keeps winning; established mutant IDs never flip to a
+     new family when one is added. *)
   let deduplication_precedence =
     [
       Family.Boolean_literal;
@@ -934,6 +1043,8 @@ module Spec = struct
       Family.If_branch;
       Family.Sequence_deletion;
       Family.Return_replacement;
+      Family.Match_arm;
+      Family.Constructor_replacement;
     ]
 
   let compare_deduplication_precedence left right =
@@ -1109,6 +1220,8 @@ module Spec = struct
     | Full_if_branch_site, Full_if_branch_site -> Some Equal
     | Sequence_expression_site, Sequence_expression_site -> Some Equal
     | Function_body_return_site, Function_body_return_site -> Some Equal
+    | Match_arm_site, Match_arm_site -> Some Equal
+    | Constructor_application_site, Constructor_application_site -> Some Equal
     | _ -> None
 
   let evaluate_at_visit_site : type input.
@@ -1164,6 +1277,15 @@ module Spec = struct
     evaluate_at_visit_site Function_body_return_site ~definitions ~source_bytes
       (Function_body_return_input expression)
 
+  let evaluate_match_arm_at_site ~definitions ~source_bytes expression =
+    evaluate_at_visit_site Match_arm_site ~definitions ~source_bytes
+      (Match_arm_input expression)
+
+  let evaluate_constructor_application_at_site ~definitions ~source_bytes
+      expression =
+    evaluate_at_visit_site Constructor_application_site ~definitions
+      ~source_bytes (Constructor_application_input expression)
+
   let evaluate_boolean_literal ~source_bytes expression =
     evaluate_boolean_literal_at_site ~definitions:boolean_literal_shadow_specs
       ~source_bytes expression
@@ -1192,6 +1314,14 @@ module Spec = struct
     evaluate_function_body_return_at_site
       ~definitions:return_replacement_shadow_specs ~source_bytes expression
 
+  let evaluate_match_arm ~source_bytes expression =
+    evaluate_match_arm_at_site ~definitions:match_arm_shadow_specs ~source_bytes
+      expression
+
+  let evaluate_constructor_replacement ~source_bytes expression =
+    evaluate_constructor_application_at_site
+      ~definitions:constructor_replacement_shadow_specs ~source_bytes expression
+
   module For_testing = struct
     let all_specs () = registry
     let boolean_literal_specs () = boolean_literal_shadow_specs
@@ -1201,6 +1331,8 @@ module Spec = struct
     let if_branch_specs () = if_branch_shadow_specs
     let sequence_deletion_specs () = sequence_deletion_shadow_specs
     let return_replacement_specs () = return_replacement_shadow_specs
+    let match_arm_specs () = match_arm_shadow_specs
+    let constructor_replacement_specs () = constructor_replacement_shadow_specs
     let visit_site_name = visit_site_name
     let binary_original_invariant_errors = binary_original_invariant_errors
     let if_branch_target_invariant_errors = if_branch_target_invariant_errors

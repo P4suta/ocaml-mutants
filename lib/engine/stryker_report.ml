@@ -110,6 +110,8 @@ let mutator_name mutant =
   | Core.Operator.If_branch -> "ConditionalExpression"
   | Core.Operator.Sequence_deletion -> "BlockStatement"
   | Core.Operator.Return_replacement -> "ReturnValue"
+  | Core.Operator.Match_arm -> "ConditionalExpression"
+  | Core.Operator.Constructor_replacement -> "ConstructorReplacement"
 
 let expected_reason result message =
   match result.Run_store.expected_reason with

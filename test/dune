@@ -224,6 +224,7 @@
   (source_tree fixtures/baseline-failure)
   (source_tree fixtures/custom-command)
   (source_tree fixtures/executable)
+  (source_tree fixtures/match)
   (source_tree fixtures/ppx)
   (source_tree fixtures/ppx-imprecise)
   (source_tree fixtures/private-library)
@@ -237,6 +238,7 @@
    %{dep:fixtures/baseline-failure/dune-project}
    %{dep:fixtures/custom-command/dune-project}
    %{dep:fixtures/executable/dune-project}
+   %{dep:fixtures/match/dune-project}
    %{dep:fixtures/ppx/dune-project}
    %{dep:fixtures/ppx-imprecise/dune-project}
    %{dep:fixtures/private-library/dune-project}
@@ -250,6 +252,7 @@
   (source_tree fixtures/baseline-failure)
   (source_tree fixtures/custom-command)
   (source_tree fixtures/executable)
+  (source_tree fixtures/match)
   (source_tree fixtures/ppx)
   (source_tree fixtures/ppx-imprecise)
   (source_tree fixtures/private-library)
@@ -263,6 +266,7 @@
    %{dep:fixtures/baseline-failure/dune-project}
    %{dep:fixtures/custom-command/dune-project}
    %{dep:fixtures/executable/dune-project}
+   %{dep:fixtures/match/dune-project}
    %{dep:fixtures/ppx/dune-project}
    %{dep:fixtures/ppx-imprecise/dune-project}
    %{dep:fixtures/private-library/dune-project}

@@ -42,6 +42,17 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Added
 
+- Two operator families for OCaml's pattern-matching core, both in the
+  Balanced tier. `match-arm` (8 rules, `match-arm-unit@1` …
+  `match-arm-none@1`) replaces every match/try arm RHS with the neutral value
+  of its typed result, sharing the return-replacement evidence; arms never
+  disappear, so exhaustiveness and pattern-binding warnings cannot fire.
+  `constructor-replacement` (`some-to-none@1`, `cons-to-nil@1`) swaps typed
+  Stdlib `Some`/cons applications for `None`/`[]`. Both sit at the tail of the
+  deduplication precedence, so every pre-existing exact-edit winner keeps its
+  ID; `rule.abi` is unchanged. The registry grows from 30 to 40 rules, and the
+  new `fixtures/match` E2E pins the combined catalog and proves the
+  instrumented tree compiles under the fatal-warning dev profile.
 - A derived mutation score in the terminal summary and the native run report:
   `summary.detected` (`killed + timeout`) and `summary.score`
   (`100 × detected / (detected + unexpected_survivors)`, `null` when the
@@ -84,7 +95,7 @@ for its CLI, TOML schema, and JSON schema.
   directory creation, publication and captured deletion, plus complete native
   recursive cache/snapshot cleanup authority remain pre-release gates.
 - An authoritative typed existential `Operator.Spec` production writer for all
-  30 versioned rules, validated at every typed visit site against the exact
+  40 versioned rules, validated at every typed visit site against the exact
   source bytes it rewrites.
 - `run`, `list`, `report`, `doctor`, `init`, and cache maintenance commands.
 - Windows-native local development and dogfood tasks; Linux and macOS remain

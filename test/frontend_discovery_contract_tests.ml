@@ -192,6 +192,70 @@ let test_match_and_try_guards_are_negated () =
         ]
         (List.map Core.Mutant.replacement mutants))
 
+let test_match_arms_take_neutral_bodies () =
+  let source =
+    String.concat "\n"
+      [
+        "let label value =";
+        "  match value with 0 -> \"zero\" | _ -> \"other\"";
+        "";
+        "let tally value = match value with None -> 0 | Some count -> count";
+        "";
+      ]
+  in
+  with_serialized_cmt ~source (fun ~root ~cmt_path ->
+      let discovery =
+        discover ~operators:[ Core.Operator.Match_arm ] ~root ~cmt_path
+      in
+      let mutants = Core.Catalog.to_list discovery.catalog in
+      Alcotest.(check (list string))
+        "string arms are replaced and the identity zero arm is excluded"
+        [
+          "match-arm-empty-string@1";
+          "match-arm-empty-string@1";
+          "match-arm-zero@1";
+        ]
+        (rule_names mutants);
+      Alcotest.(check (list string))
+        "replacements are the neutral literals of the arm result type"
+        [ "\"\""; "\"\""; "0" ]
+        (List.map Core.Mutant.replacement mutants))
+
+let test_user_defined_some_is_not_swapped () =
+  let source =
+    String.concat "\n"
+      [
+        "let genuine value = [ Some value ]";
+        "";
+        "module Local = struct";
+        "  type 'value shadow = Some of 'value | Empty";
+        "";
+        "  let masked value = [ Some value; Empty ]";
+        "end";
+        "";
+      ]
+  in
+  with_serialized_cmt ~source (fun ~root ~cmt_path ->
+      let discovery =
+        discover
+          ~operators:[ Core.Operator.Constructor_replacement ]
+          ~root ~cmt_path
+      in
+      let mutants = Core.Catalog.to_list discovery.catalog in
+      let some_swaps =
+        List.filter
+          (fun mutant ->
+            Core.Mutant.rule mutant |> Core.Operator.Rule.stable_name
+            = "some-to-none@1")
+          mutants
+      in
+      Alcotest.(check (list int))
+        "only the Stdlib option constructor is swapped" [ 1 ]
+        (List.map
+           (fun mutant ->
+             Core.Mutant.range mutant |> Core.Source_range.start_line)
+           some_swaps))
+
 let () =
   Alcotest.run "Frontend discovery contract"
     [
@@ -205,5 +269,9 @@ let () =
             test_shadowed_comparison_is_not_mutated;
           Alcotest.test_case "match and try guards are negated" `Quick
             test_match_and_try_guards_are_negated;
+          Alcotest.test_case "match arms take neutral bodies" `Quick
+            test_match_arms_take_neutral_bodies;
+          Alcotest.test_case "user-defined Some is not swapped" `Quick
+            test_user_defined_some_is_not_swapped;
         ] );
     ]

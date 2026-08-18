@@ -18,6 +18,11 @@ source-workspace file digests and `git status --porcelain=v1` before and after.
 - `executable`: mutates implementation code owned by an executable stanza.
 - `root-test`: proves a root-level test stanza does not classify neighboring
   production modules as tests.
+- `match`: match/try arms, guards, and `Some`/cons constructors for the
+  match-arm and constructor-replacement families, including their exact-edit
+  deduplication against boolean-literal and return-replacement. It has no
+  tests, so its `run` E2E proves the instrumented tree compiles and reports a
+  zero score for the all-survivors case.
 
 Inline-test fixtures require the corresponding PPX packages in their own opam
 test switch and are kept out of this repository's normal `dune runtest` graph.

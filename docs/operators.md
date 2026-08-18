@@ -15,6 +15,8 @@ names below.
 | `if-branch` | replace either branch with the other | strong | Both branches share the Typedtree result type |
 | `sequence-deletion` | `first; second` → `second` | all | Typed sequence result is the right expression type |
 | `return-replacement` | typed function result → neutral value | balanced | Stable function-body root with a supported result type |
+| `match-arm` | match/try arm RHS → neutral value | balanced | Arm result is `bool`, `int`, `float`, `string`, `unit`, `list`, or `option` |
+| `constructor-replacement` | `Some e` → `None`, `head :: tail` → `[]` | balanced | Typed constructor resolves to the Stdlib `option`/`list` type |
 
 Profiles are monotonically inclusive tiers over these families. `balanced`
 (the default) runs every family marked balanced; `strong` adds `if-branch`,
@@ -31,7 +33,14 @@ counts every skip occurrence and records the complete sorted set of distinct
 source or source-range examples for each reason. Return replacement is limited
 to stable function-body
 roots whose result is `bool`, `int`, `float`, `string`, `unit`, `list`, or
-`option`; it never falls back to an untyped textual rewrite. Boundary
+`option`; it never falls back to an untyped textual rewrite. Match-arm
+replacement applies the same neutral-value evidence to every match and try arm
+RHS (refutation cases excluded); because instrumentation always keeps the
+original arm body in the same compilation unit, pattern bindings stay used and
+the mutated tree compiles under fatal-warning profiles. Constructor
+replacement swaps a typed `Some` application to `None` and a typed cons cell
+to `[]`; same-named user-defined constructors are excluded by the resolved
+constructor type. Boundary
 comparison rules intentionally target off-by-one failures instead of duplicating
 whole-condition negation. Condition negation covers `if`, `while`, and typed
 match/exception guards.
@@ -43,7 +52,7 @@ so users do not pay for running semantically identical mutants under different
 IDs.
 
 The typed existential `Operator.Spec` registry is the single production writer
-for all 30 versioned rules. At each typed visit site the frontend evaluates the
+for all 40 versioned rules. At each typed visit site the frontend evaluates the
 registry, validates every candidate against the exact source bytes, and commits
 the validated mutants directly; there is no second generation path. A candidate
 whose typed evidence does not own its source slice is skipped as an imprecise

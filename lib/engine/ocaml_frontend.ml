@@ -367,6 +367,21 @@ let discover_cmt_unchecked ~root ~selected_source ~operators cmt_file =
                                 case.Typedtree.c_guard)
                             cases
                         in
+                        let mutate_arms cases =
+                          if operator_enabled operators Core.Operator.Match_arm
+                          then
+                            List.iter
+                              (fun case ->
+                                let arm = case.Typedtree.c_rhs in
+                                match arm.Typedtree.exp_desc with
+                                | Typedtree.Texp_unreachable -> ()
+                                | _ ->
+                                    commit_event arm.exp_loc
+                                      (fun ~source_bytes ->
+                                        Core.Operator.Spec.evaluate_match_arm
+                                          ~source_bytes arm))
+                              cases
+                        in
                         let rec visit_expression iterator expression =
                           let location = expression.Typedtree.exp_loc in
                           (match expression.exp_desc with
@@ -408,16 +423,29 @@ let discover_cmt_unchecked ~root ~selected_source ~operators cmt_file =
                                       (fun case ->
                                         add_body case.Typedtree.c_rhs)
                                       cases)
-                          | Typedtree.Texp_construct (_, constructor, []) ->
-                              if
-                                operator_enabled operators
-                                  Core.Operator.Boolean_literal
-                                && (constructor.cstr_name = "true"
-                                   || constructor.cstr_name = "false")
-                              then
-                                commit_event location (fun ~source_bytes ->
-                                    Core.Operator.Spec.evaluate_boolean_literal
-                                      ~source_bytes expression)
+                          | Typedtree.Texp_construct (_, constructor, arguments)
+                            -> (
+                              match arguments with
+                              | [] ->
+                                  if
+                                    operator_enabled operators
+                                      Core.Operator.Boolean_literal
+                                    && (constructor.cstr_name = "true"
+                                       || constructor.cstr_name = "false")
+                                  then
+                                    commit_event location (fun ~source_bytes ->
+                                        Core.Operator.Spec
+                                        .evaluate_boolean_literal ~source_bytes
+                                          expression)
+                              | _ :: _ ->
+                                  if
+                                    operator_enabled operators
+                                      Core.Operator.Constructor_replacement
+                                  then
+                                    commit_event location (fun ~source_bytes ->
+                                        Core.Operator.Spec
+                                        .evaluate_constructor_replacement
+                                          ~source_bytes expression))
                           | Typedtree.Texp_ifthenelse
                               (condition, yes_branch, no_branch) -> (
                               negate_condition condition;
@@ -461,11 +489,15 @@ let discover_cmt_unchecked ~root ~selected_source ~operators cmt_file =
                           | Typedtree.Texp_match
                               (_, computation_cases, effect_cases, _) ->
                               negate_guards computation_cases;
-                              negate_guards effect_cases
+                              negate_guards effect_cases;
+                              mutate_arms computation_cases;
+                              mutate_arms effect_cases
                           | Typedtree.Texp_try (_, exception_cases, effect_cases)
                             ->
                               negate_guards exception_cases;
-                              negate_guards effect_cases
+                              negate_guards effect_cases;
+                              mutate_arms exception_cases;
+                              mutate_arms effect_cases
                           | Typedtree.Texp_while (condition, _) ->
                               negate_condition condition
                           | Typedtree.Texp_sequence (_, right) -> (
