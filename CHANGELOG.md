@@ -7,6 +7,12 @@ for its CLI, TOML schema, and JSON schema.
 
 ### Fixed
 
+- The `init` starter file no longer narrows `mutation.operators` to three
+  families: it now leaves the key omitted (every family enabled, matching the
+  built-in defaults) with a commented example that lists all nine names.
+- `--mutant` is no longer rejected when the configuration narrows
+  `mutation.operators`. Explicit IDs already resolve against the complete
+  catalog, exactly as they do for rules outside the selected profile.
 - `report` and `cache stats|gc|clean` now load the workspace configuration and
   resolve the same store as `run`, so a configured `cache.directory` applies to
   every subcommand. Both accept `--path PATH` (default `.`) to name the

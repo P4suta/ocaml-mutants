@@ -259,20 +259,6 @@ let selection ~changed ~changed_from ~mutants ~operators =
   | false, None, _ :: _, _ -> Ok (Request.Mutants mutants)
   | false, None, [], _ -> Ok Request.All
 
-let validate_configured_mutant_selection ~mutants config =
-  let all_families = Ocaml_mutants_core.Operator.Family.all in
-  let configured = config.Config.mutation.operators in
-  let complete_operator_set =
-    List.length configured = List.length all_families
-    && List.for_all (fun family -> List.mem family configured) all_families
-  in
-  if mutants <> [] && not complete_operator_set then
-    Error
-      (Error.make Error.Usage
-         "--mutant cannot be combined with mutation.operators from the \
-          configuration")
-  else Ok ()
-
 let configuration ~root ~include_ ~exclude ~operators ~profile ~command ~timeout
     ~jobs ~cache_mode =
   match Config.load root with
@@ -346,7 +332,6 @@ let run_action path include_ exclude operators profile mutants jobs timeout
       configuration ~root ~include_ ~exclude ~operators ~profile ~command
         ~timeout ~jobs ~cache_mode
     in
-    let* () = validate_configured_mutant_selection ~mutants config in
     let* selection = selection ~changed ~changed_from ~mutants ~operators in
     let* output =
       run_output ~json ~stryker_json ~threshold_high ~threshold_low ~quiet
@@ -379,7 +364,6 @@ let list_action path include_ exclude operators profile mutants changed
       configuration ~root ~include_ ~exclude ~operators ~profile ~command:None
         ~timeout:None ~jobs:None ~cache_mode:None
     in
-    let* () = validate_configured_mutant_selection ~mutants config in
     let* selection = selection ~changed ~changed_from ~mutants ~operators in
     let* output = output ~json ~quiet ~no_color in
     App.list_mutants ~root ~config ~selection ~output

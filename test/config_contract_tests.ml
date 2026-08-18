@@ -105,6 +105,20 @@ directory = "shared-proof-cache"
         "mode override preserves configured directory"
         (Some "shared-proof-cache") overridden.cache.directory
 
+(* The starter file written by `init` must never narrow behaviour away from the
+   built-in defaults: a freshly initialized workspace behaves exactly like one
+   with no configuration at all. *)
+let test_example_matches_defaults () =
+  match Engine.Config.parse ~file:"example.toml" Engine.Config.example with
+  | Error diagnostics -> Alcotest.fail diagnostics
+  | Ok config ->
+      Alcotest.(check bool)
+        "example enables every operator family" true
+        (config.mutation.operators = Ocaml_mutants_core.Operator.Family.all);
+      Alcotest.(check bool)
+        "example selects the balanced profile" true
+        (config.mutation.profile = Ocaml_mutants_core.Operator.Profile.Balanced)
+
 let () =
   Alcotest.run "configuration contracts"
     [
@@ -116,5 +130,7 @@ let () =
             test_duplicate_rows;
           Alcotest.test_case "cache mode override is typed" `Quick
             test_cache_mode_override;
+          Alcotest.test_case "init starter matches the defaults" `Quick
+            test_example_matches_defaults;
         ] );
     ]

@@ -41,7 +41,9 @@ directory = "team-cache"
 
 - `mutation.include`: string glob array. At least one pattern must match.
 - `mutation.exclude`: string glob array applied after includes.
-- `mutation.operators`: names from the operator reference.
+- `mutation.operators`: names from the operator reference. When omitted, every
+  operator family is enabled; the `init` starter file leaves it omitted so a
+  freshly initialized workspace matches the built-in defaults.
 - `mutation.profile`: `"balanced"`, `"strong"`, or `"all"`. The default and
   `init` output both use `"balanced"`.
 - `mutation.expect`: repeated strict table rows containing a unique full
@@ -77,8 +79,9 @@ replaces the corresponding TOML array. `--profile` overrides the profile, and
 `--cache-mode auto|on|off` overrides only `cache.mode` while retaining the
 configured cache directory.
 Repeatable `--mutant FULL_OR_UNIQUE_PREFIX` resolves against the complete
-catalog, including rules outside the selected profile, and cannot be combined
-with changed-file or operator filters. `--fresh` bypasses existing outcomes but
+catalog, including rules outside the selected profile and families outside the
+configured `mutation.operators`, and cannot be combined with changed-file or
+operator filters. `--fresh` bypasses existing outcomes but
 stores newly proven cacheable outcomes. Values after `--` replace the configured
 stages with one argv-vector stage.
 

@@ -228,11 +228,18 @@ reason = %S
 |} id reason
 
 let write_config layout ~stage_flag ~stage_name ?expectation ?cache_directory
-    executable =
+    ?operators executable =
   let cache_directory_line =
     match cache_directory with
     | None -> ""
     | Some directory -> Printf.sprintf "directory = %S\n" directory
+  in
+  let operators_line =
+    match operators with
+    | None -> ""
+    | Some names ->
+        Printf.sprintf "operators = [%s]\n"
+          (String.concat ", " (List.map (Printf.sprintf "%S") names))
   in
   let config =
     Printf.sprintf
@@ -241,7 +248,7 @@ let write_config layout ~stage_flag ~stage_name ?expectation ?cache_directory
 [mutation]
 include = ["subject.ml"]
 profile = "balanced"
-
+%s
 %s[test]
 timeout = %.1f
 baseline_runs = 1
@@ -257,6 +264,7 @@ jobs = 1
 [cache]
 mode = "off"
 %s|}
+      operators_line
       (expectation_block expectation)
       mutant_timeout_seconds stage_name executable stage_flag
       cache_directory_line
@@ -487,6 +495,16 @@ let choose value = if value then first else second
         [ "--mutant"; selected_id ]
       |> check_not_evaluated_expectation ~selected_id ~expected_id
            ~reason:partial_reason;
+
+      (* --mutant resolves against the complete catalog, so a configuration that
+         narrows mutation.operators must not reject explicit IDs from other
+         families. *)
+      write_config layout ~stage_flag:killing_stage_flag
+        ~stage_name:"kill-selected" ~operators:[ "comparison" ] executable;
+      run_json ~cli layout ~label:"narrowed-operator mutant selection"
+        ~exit_code:0
+        [ "--mutant"; selected_id ]
+      |> check_completed_report "narrowed-operator mutant selection";
 
       let after = source_digest layout in
       if not (String.equal before after) then

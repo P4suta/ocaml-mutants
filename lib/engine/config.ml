@@ -625,7 +625,13 @@ version = 1
 profile = "balanced"
 include = ["**/*.ml"]
 exclude = ["**/test/**", "**/tests/**", "**/_build/**"]
-operators = ["boolean-literal", "condition-negation", "comparison"]
+# Every operator family is enabled while `operators` stays omitted.
+# Uncomment to narrow the catalog:
+# operators = [
+#   "boolean-literal", "condition-negation", "boolean-connective",
+#   "comparison", "integer-arithmetic", "float-arithmetic",
+#   "if-branch", "sequence-deletion", "return-replacement",
+# ]
 
 [test]
 command = ["dune", "runtest", "--force"]

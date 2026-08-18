@@ -61,7 +61,7 @@
 
 (test
  (name config_contract_tests)
- (libraries ocaml_mutants_engine alcotest))
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest))
 
 (rule
  (alias dogfood-fast)
