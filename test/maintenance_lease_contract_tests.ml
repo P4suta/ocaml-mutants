@@ -48,6 +48,7 @@ let with_layout action =
   let parent = Filename.temp_file "ocaml-mutants-maintenance-" ".tmp" in
   Sys.remove parent;
   create_directory parent;
+  let parent = Unix.realpath parent in
   Fun.protect
     ~finally:(fun () -> ignore (Engine.Util.remove_tree parent))
     (fun () ->

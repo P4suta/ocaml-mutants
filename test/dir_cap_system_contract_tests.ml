@@ -97,7 +97,10 @@ let rec remove_tree path =
       Unix.unlink path
 
 let with_temp_directory action =
-  let root = Filename.temp_dir "ocaml-mutants-dir-cap-" "" in
+  (* macOS temp paths traverse the /var -> private/var symlink, which the
+     no-follow probe rightly refuses; hand tests the canonical chain, exactly as
+     production resolves workspace identity before probing. *)
+  let root = Unix.realpath (Filename.temp_dir "ocaml-mutants-dir-cap-" "") in
   Fun.protect
     (fun () -> action root)
     ~finally:(fun () -> if Sys.file_exists root then remove_tree root)
@@ -206,7 +209,7 @@ let expect_cleanup_primary ~label ~cleanup_operation = function
 
 let existing_directory path =
   let forbidden_path =
-    Filename.temp_dir "ocaml-mutants-dir-cap-forbidden-" ""
+    Unix.realpath (Filename.temp_dir "ocaml-mutants-dir-cap-forbidden-" "")
   in
   Fun.protect
     (fun () ->
@@ -245,9 +248,17 @@ let test_native_names_and_captured_reads () =
       let original_path = Filename.concat cache_path original_name in
       write_file original_path "captured-content";
       let additional_names = if Sys.win32 then [] else [ "raw-\255-name" ] in
-      List.iter
-        (fun name -> write_file (Filename.concat cache_path name) "raw")
-        additional_names;
+      let additional_names =
+        (* APFS refuses non-UTF-8 byte sequences in names; raw-byte losslessness
+           is then exercised only where such entries can exist. *)
+        List.filter
+          (fun name ->
+            try
+              write_file (Filename.concat cache_path name) "raw";
+              true
+            with Sys_error _ -> false)
+          additional_names
+      in
       let directory = existing_directory cache_path in
       Fun.protect
         (fun () ->
