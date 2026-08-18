@@ -235,10 +235,19 @@ let test_native_names_and_captured_reads () =
       let original_name = "original data 雪.txt" in
       let original_path = Filename.concat cache_path original_name in
       write_file original_path "captured-content";
-      let additional_names = if Sys.win32 then [] else [ "raw-\255-name" ] in
-      List.iter
-        (fun name -> write_file (Filename.concat cache_path name) "raw")
-        additional_names;
+      (* Lossless raw-byte names are exercised only where the filesystem accepts
+         them: APFS enforces valid-UTF-8 names and refuses the write with
+         EILSEQ, so the case drops there instead of failing. *)
+      let additional_names =
+        if Sys.win32 then []
+        else
+          List.filter
+            (fun name ->
+              match write_file (Filename.concat cache_path name) "raw" with
+              | () -> true
+              | exception Sys_error _ -> false)
+            [ "raw-\255-name" ]
+      in
       let directory = existing_directory cache_path in
       Fun.protect
         (fun () ->

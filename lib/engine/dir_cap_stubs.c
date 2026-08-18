@@ -3483,11 +3483,22 @@ CAMLprim value ocaml_mutants_dircap_delete_captured(
       error_result = dc_posix_error(errno);
       CAMLreturn(dc_raw_delete_not_committed(error_result));
     }
-    /* Post-commit evidence: the pinned inode's link count dropping to zero
-       proves the removed entry was the captured one and not a rebound name
-       that won the verify-to-commit window. */
-    if (fstat(target->os, &target_stat) == 0)
+    /* Post-commit evidence. For files, the pinned inode's link count
+       dropping to zero proves the removed entry was the captured one and not
+       a rebound name that won the verify-to-commit window. Removed
+       directories do not report a zero link count on every platform (Darwin
+       keeps a nonzero count on the open descriptor), so directory release is
+       proven by the verified name no longer resolving under the live
+       parent. */
+    if (target_kind == 1) {
+      struct stat gone;
+      namespace_released =
+          fstatat(parent->os, target->capture_name, &gone,
+                  AT_SYMLINK_NOFOLLOW) != 0 &&
+          errno == ENOENT;
+    } else if (fstat(target->os, &target_stat) == 0) {
       namespace_released = target_stat.st_nlink == 0;
+    }
     (void)dc_take_test_injection(DC_INJECT_DELETE_AFTER_COMMIT,
                                  &inject_action, &inject_close);
     if (inject_action) {
