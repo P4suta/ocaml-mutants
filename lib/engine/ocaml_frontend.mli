@@ -4,8 +4,10 @@ type skip_reason =
   | Test_source
   | Imprecise_mapping
   | Unsupported_expression
-      (** Retained for report-string stability; the single-writer frontend no
-          longer classifies any current skip under this reason. *)
+      (** A typed site whose source position admits no in-place replacement:
+          today this is the expression of a punned labeled or optional argument
+          (~name / ?name), where the dispatch instrumentation would render
+          invalid syntax. *)
   | Duplicate
 
 type skip_summary = {

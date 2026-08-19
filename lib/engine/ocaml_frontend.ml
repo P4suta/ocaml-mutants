@@ -280,6 +280,20 @@ let discover_cmt_unchecked ~root ~selected_source ~operators cmt_file =
                                 | Some original when String.trim original = ""
                                   ->
                                     skip_gated Imprecise_mapping
+                                | Some _
+                                  when let start =
+                                         Core.Source_range.start_byte range
+                                       in
+                                       start > 0
+                                       && (source.[start - 1] = '~'
+                                          || source.[start - 1] = '?') ->
+                                    (* A punned labeled or optional argument
+                                       (~name / ?name) admits no expression on
+                                       the name's own byte range: replacing it
+                                       in place would render the invalid
+                                       ~(dispatch) form, so the site is reported
+                                       as unsupported instead. *)
+                                    skip_gated Unsupported_expression
                                 | Some _ -> (
                                     match
                                       Core.Source.slice source_value range
