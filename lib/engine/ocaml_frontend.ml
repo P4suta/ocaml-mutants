@@ -457,14 +457,41 @@ let discover_cmt_unchecked ~root ~selected_source ~operators cmt_file =
                                         .evaluate_boolean_literal ~source_bytes
                                           expression)
                               | _ :: _ ->
+                                  (* The compiler wraps a value supplied to an
+                                     optional argument in a synthesized [Some]
+                                     whose span equals its argument's: the
+                                     source has no constructor to replace there,
+                                     so the site is unsupported. *)
+                                  let synthesized_wrapper =
+                                    String.equal constructor.cstr_name "Some"
+                                    &&
+                                    match arguments with
+                                    | [ argument ] ->
+                                        let argument_location =
+                                          argument.Typedtree.exp_loc
+                                        in
+                                        argument_location.Location.loc_start
+                                          .Lexing.pos_cnum
+                                        = location.Location.loc_start
+                                            .Lexing.pos_cnum
+                                        && argument_location.Location.loc_end
+                                             .Lexing.pos_cnum
+                                           = location.Location.loc_end
+                                               .Lexing.pos_cnum
+                                    | _ -> false
+                                  in
                                   if
                                     operator_enabled operators
                                       Core.Operator.Constructor_replacement
                                   then
-                                    commit_event location (fun ~source_bytes ->
-                                        Core.Operator.Spec
-                                        .evaluate_constructor_replacement
-                                          ~source_bytes expression))
+                                    if synthesized_wrapper then
+                                      skip ~location Unsupported_expression
+                                    else
+                                      commit_event location
+                                        (fun ~source_bytes ->
+                                          Core.Operator.Spec
+                                          .evaluate_constructor_replacement
+                                            ~source_bytes expression))
                           | Typedtree.Texp_ifthenelse
                               (condition, yes_branch, no_branch) -> (
                               negate_condition condition;

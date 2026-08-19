@@ -380,10 +380,25 @@ let recover_stale_snapshots () =
           recover_candidate ~temporary root)
   with Sys_error _ -> ()
 
+(* Windows releases file sharing asynchronously after a build tool exits —
+   antivirus and indexer handles linger briefly on fresh artifacts such as
+   dune's .db — so a failed snapshot removal retries on a short bounded schedule
+   before the failure is reported. *)
+let remove_tree_with_retry root =
+  let rec attempt remaining =
+    match remove_tree root with
+    | Ok () -> Ok ()
+    | Error _ when remaining > 0 ->
+        Unix.sleepf 0.1;
+        attempt (remaining - 1)
+    | Error _ as error -> error
+  in
+  attempt 20
+
 let release_and_remove ~root descriptor =
   with_lease_registry (fun () ->
       let release = close_lease descriptor in
-      let removal = remove_tree root in
+      let removal = remove_tree_with_retry root in
       Hashtbl.remove live_leases (lease_key root);
       match (release, removal) with
       | Ok (), Ok () -> Ok ()
