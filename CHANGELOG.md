@@ -5,6 +5,8 @@ for its CLI, TOML schema, and JSON schema.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-20
+
 ### Fixed
 
 - `ocaml-mutants -- <command>` works: the `--` command tail now reaches the
@@ -163,5 +165,8 @@ for its CLI, TOML schema, and JSON schema.
   40 versioned rules, validated at every typed visit site against the exact
   source bytes it rewrites.
 - `run`, `list`, `report`, `doctor`, `init`, and cache maintenance commands.
-- Windows-native local development and dogfood tasks; Linux and macOS remain
-  target platforms pending cross-OS acceptance evidence.
+- Windows, Linux, and macOS local development and dogfood tasks, with the
+  complete test suite green on every CI platform row.
+
+[Unreleased]: https://github.com/P4suta/ocaml-mutants/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/P4suta/ocaml-mutants/releases/tag/v0.1.0
