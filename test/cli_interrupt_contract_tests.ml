@@ -512,10 +512,13 @@ module Process_witness = struct
   external image_of_handle : handle -> string option
     = "ocaml_mutants_test_witness_handle_image"
 
-  type proof = Handle of handle | Exited_at_open | Pid_polling
-  type t = { pid : int; proof : proof }
+  external witness_in_job : Native_launcher.process -> handle -> bool option
+    = "ocaml_mutants_test_witness_in_job"
 
-  let create ~expected_image pid =
+  type proof = Handle of handle | Exited_at_open | Pid_polling
+  type t = { pid : int; role : string; proof : proof }
+
+  let create ~expected_image ~role ~owned_process pid =
     match open_witness pid with
     | Witness handle ->
         (* All three descendant roles are instances of this test executable; any
@@ -531,16 +534,26 @@ module Process_witness = struct
                     (String.lowercase_ascii (Filename.basename expected_image)))
           ->
             fail
-              "witness for authenticated pid %d opened %s instead of the \
+              "witness for authenticated %s pid %d opened %s instead of the \
                descendant image %s"
-              pid image expected_image
+              role pid image expected_image
         | Some _ | None -> ());
-        { pid; proof = Handle handle }
-    | Already_exited -> { pid; proof = Exited_at_open }
-    | Unavailable -> { pid; proof = Pid_polling }
+        (* The witness handle also proves Job containment: IsProcessInJob
+           against the launcher's own Job answers "is this exact descendant in
+           our tree", including nested Jobs, with none of the ambiguity a
+           child-side self-report would have under a CI runner's wrapper Job.
+           Windows-only by nature; None elsewhere. *)
+        (match witness_in_job owned_process handle with
+        | Some false ->
+            fail "authenticated %s (pid %d) is not a member of the owned Job"
+              role pid
+        | Some true | None -> ());
+        { pid; role; proof = Handle handle }
+    | Already_exited -> { pid; role; proof = Exited_at_open }
+    | Unavailable -> { pid; role; proof = Pid_polling }
     | Open_failed code ->
-        fail "cannot open a liveness witness for pid %d (native error %d)" pid
-          code
+        fail "cannot open a liveness witness for %s pid %d (native error %d)"
+          role pid code
 
   let exited witness =
     match witness.proof with
@@ -559,13 +572,17 @@ module Process_witness = struct
     | Handle handle -> (
         match image_of_handle handle with
         | Some image ->
-            Printf.sprintf "%d (witness image %s; %s)" witness.pid image
-              pid_owner
+            Printf.sprintf "%s pid %d (witness image %s; %s)" witness.role
+              witness.pid image pid_owner
         | None ->
-            Printf.sprintf "%d (witness image unavailable; %s)" witness.pid
-              pid_owner)
-    | Exited_at_open -> Printf.sprintf "%d (exited at witness open)" witness.pid
-    | Pid_polling -> Printf.sprintf "%d (pid polling; %s)" witness.pid pid_owner
+            Printf.sprintf "%s pid %d (witness image unavailable; %s)"
+              witness.role witness.pid pid_owner)
+    | Exited_at_open ->
+        Printf.sprintf "%s pid %d (exited at witness open)" witness.role
+          witness.pid
+    | Pid_polling ->
+        Printf.sprintf "%s pid %d (pid polling; %s)" witness.role witness.pid
+          pid_owner
 end
 
 let await_readiness layout listener connections owned =
@@ -623,6 +640,7 @@ let await_readiness layout listener connections owned =
           ( ready,
             Process_witness.create
               ~expected_image:(Unix.realpath Sys.executable_name)
+              ~role:ready.role ~owned_process:owned.Native_launcher.process
               ready.pid )
   done;
   [ "stage"; "child"; "grandchild" ]
