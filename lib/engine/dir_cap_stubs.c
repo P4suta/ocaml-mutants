@@ -3911,6 +3911,7 @@ CAMLprim value ocaml_mutants_dircap_atomic_rename(value source_value,
   int source_problem, target_problem;
   int replacement = Int_val(replacement_value);
   int inject_before_commit = 0, inject_after_commit = 0;
+  int cleanup_advisory = 0;
   if (dc_handle_problem(source, &source_problem))
     CAMLreturn(dc_error(
         DC_NATIVE_DOMAIN, source_problem,
@@ -4029,6 +4030,7 @@ CAMLprim value ocaml_mutants_dircap_atomic_rename(value source_value,
     char source_identity[DC_IDENTITY_CAPACITY];
     char bound_identity[DC_IDENTITY_CAPACITY];
     const char *source_capture;
+    int need_name_commit = 1;
     int commit;
     if (fstat(target_parent->os, &parent_stat) != 0)
       CAMLreturn(dc_posix_error(errno));
@@ -4052,44 +4054,84 @@ CAMLprim value ocaml_mutants_dircap_atomic_rename(value source_value,
     if (!dc_posix_identity(&source_stat, source_identity,
                            sizeof(source_identity)))
       CAMLreturn(dc_posix_error(EOVERFLOW));
-    /* The retained capture name is re-verified against the still-open source
-       inode immediately before the one-shot native commit. A same-effective-
-       uid namespace writer can win this window; the contract discloses that
-       residual exactly as it does for creation evidence. */
-    if (fstatat(target_parent->os, source_capture, &bound_stat,
-                AT_SYMLINK_NOFOLLOW) != 0)
-      CAMLreturn(errno == ENOENT
-                     ? dc_error(DC_CONTRACT, DC_OTHER,
-                                "publication-source-binding-changed")
-                     : dc_posix_error(errno));
-    if (!dc_posix_identity(&bound_stat, bound_identity,
-                           sizeof(bound_identity)))
-      CAMLreturn(dc_posix_error(EOVERFLOW));
-    if (strcmp(bound_identity, source_identity) != 0)
-      CAMLreturn(dc_error(DC_CONTRACT, DC_OTHER,
-                          "publication-source-binding-changed"));
 #ifdef __linux__
-    commit = replacement == 0
-                 ? renameat2(target_parent->os, source_capture,
-                             target_parent->os, String_val(name_value),
-                             RENAME_NOREPLACE)
-                 : renameat(target_parent->os, source_capture,
-                            target_parent->os, String_val(name_value));
-#else
-    commit = replacement == 0
-                 ? renameatx_np(target_parent->os, source_capture,
-                                target_parent->os, String_val(name_value),
-                                RENAME_EXCL)
-                 : renameat(target_parent->os, source_capture,
-                            target_parent->os, String_val(name_value));
+    /* Linux no-replace publication binds the destination straight to the
+       still-open source inode through the descriptor namespace: linkat over
+       /proc/self/fd leaves no source name to race at all, closing the
+       verify-to-commit window the fallback below can only disclose. The
+       stale source name is then consumed only while it still resolves to
+       the published inode; that cleanup cannot retract the committed
+       publication, so its failure degrades to a Published advisory. */
+    if (replacement == 0) {
+      char through_fd[64];
+      snprintf(through_fd, sizeof(through_fd), "/proc/self/fd/%d", source->os);
+      if (linkat(AT_FDCWD, through_fd, target_parent->os,
+                 String_val(name_value), AT_SYMLINK_FOLLOW) == 0) {
+        need_name_commit = 0;
+        if (fstatat(target_parent->os, source_capture, &bound_stat,
+                    AT_SYMLINK_NOFOLLOW) == 0 &&
+            dc_posix_identity(&bound_stat, bound_identity,
+                              sizeof(bound_identity)) &&
+            strcmp(bound_identity, source_identity) == 0) {
+          if (unlinkat(target_parent->os, source_capture, 0) != 0)
+            cleanup_advisory = 1;
+        } else {
+          cleanup_advisory = 1;
+        }
+      } else {
+        int error = errno;
+        if (error == EEXIST) CAMLreturn(dc_posix_error(error));
+        if (error != EPERM && error != ENOTSUP && error != EOPNOTSUPP &&
+            error != ENOSYS && error != EXDEV && error != EMLINK &&
+            error != ENOENT)
+          CAMLreturn(dc_posix_error(error));
+        /* Hard links unavailable on this filesystem (or /proc absent): fall
+           back to the verified-capture-name rename with its documented
+           same-effective-uid residual. */
+      }
+    }
 #endif
-    if (commit != 0) {
-      int error = errno;
-      if (replacement == 0 &&
-          (error == EINVAL || error == ENOSYS || error == ENOTSUP))
-        CAMLreturn(dc_error(DC_POSIX, DC_UNSUPPORTED,
-                            "no-replace-rename-unavailable"));
-      CAMLreturn(dc_posix_error(error));
+    if (need_name_commit) {
+      /* The retained capture name is re-verified against the still-open
+         source inode immediately before the one-shot native commit. A
+         same-effective-uid namespace writer can win this window; the
+         contract discloses that residual exactly as it does for creation
+         evidence. */
+      if (fstatat(target_parent->os, source_capture, &bound_stat,
+                  AT_SYMLINK_NOFOLLOW) != 0)
+        CAMLreturn(errno == ENOENT
+                       ? dc_error(DC_CONTRACT, DC_OTHER,
+                                  "publication-source-binding-changed")
+                       : dc_posix_error(errno));
+      if (!dc_posix_identity(&bound_stat, bound_identity,
+                             sizeof(bound_identity)))
+        CAMLreturn(dc_posix_error(EOVERFLOW));
+      if (strcmp(bound_identity, source_identity) != 0)
+        CAMLreturn(dc_error(DC_CONTRACT, DC_OTHER,
+                            "publication-source-binding-changed"));
+#ifdef __linux__
+      commit = replacement == 0
+                   ? renameat2(target_parent->os, source_capture,
+                               target_parent->os, String_val(name_value),
+                               RENAME_NOREPLACE)
+                   : renameat(target_parent->os, source_capture,
+                              target_parent->os, String_val(name_value));
+#else
+      commit = replacement == 0
+                   ? renameatx_np(target_parent->os, source_capture,
+                                  target_parent->os, String_val(name_value),
+                                  RENAME_EXCL)
+                   : renameat(target_parent->os, source_capture,
+                              target_parent->os, String_val(name_value));
+#endif
+      if (commit != 0) {
+        int error = errno;
+        if (replacement == 0 &&
+            (error == EINVAL || error == ENOSYS || error == ENOTSUP))
+          CAMLreturn(dc_error(DC_POSIX, DC_UNSUPPORTED,
+                              "no-replace-rename-unavailable"));
+        CAMLreturn(dc_posix_error(error));
+      }
     }
     /* The retained binding now points at the destination name. A failed
        retention clears it so later name-verified operations fail closed
@@ -4110,12 +4152,24 @@ CAMLprim value ocaml_mutants_dircap_atomic_rename(value source_value,
 #endif
 #endif
   advisories = Val_emptylist;
+  if (cleanup_advisory) {
+    /* The publication itself committed; only the stale source name survived
+       its verified consumption. Path-based garbage collection owns such
+       residue, exactly like a pending artifact retained after a failed
+       commit. */
+    error_result =
+        dc_error(DC_CONTRACT, DC_OTHER, "publication-source-name-not-consumed");
+    advisory = caml_alloc(2, 0);
+    Store_field(advisory, 0, Field(error_result, 0));
+    Store_field(advisory, 1, advisories);
+    advisories = advisory;
+  }
   if (inject_after_commit) {
     error_result =
         dc_error(DC_CONTRACT, DC_OTHER, "injected-post-publish-advisory");
     advisory = caml_alloc(2, 0);
     Store_field(advisory, 0, Field(error_result, 0));
-    Store_field(advisory, 1, Val_emptylist);
+    Store_field(advisory, 1, advisories);
     advisories = advisory;
   }
   result = dc_ok(advisories);
