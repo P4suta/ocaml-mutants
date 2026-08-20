@@ -366,6 +366,38 @@ CAMLprim value ocaml_mutants_test_witness_exited(value witness_value) {
 #endif
 }
 
+/* Whether the witnessed process is a member of the launcher's own Job,
+   answered from the parent side through the retained handles. Nested Jobs
+   count as membership, so descendants placed in the CLI's inner Job still
+   report true. Windows-only: None elsewhere or when either handle is gone.
+   The witness handle's PROCESS_QUERY_LIMITED_INFORMATION access satisfies
+   IsProcessInJob's requirement. */
+CAMLprim value ocaml_mutants_test_witness_in_job(value process_value,
+                                                 value witness_value) {
+  CAMLparam2(process_value, witness_value);
+#ifdef _WIN32
+  {
+    CAMLlocal1(result);
+    struct interrupt_process *process =
+        (struct interrupt_process *)Data_custom_val(process_value);
+    struct interrupt_witness *witness =
+        (struct interrupt_witness *)Data_custom_val(witness_value);
+    BOOL inside = FALSE;
+    if (process->job == NULL || witness->closed || witness->process == NULL)
+      CAMLreturn(Val_int(0)); /* None */
+    if (!IsProcessInJob(witness->process, process->job, &inside))
+      CAMLreturn(Val_int(0)); /* None */
+    result = caml_alloc(1, 0);
+    Store_field(result, 0, Val_bool(inside));
+    CAMLreturn(result);
+  }
+#else
+  (void)process_value;
+  (void)witness_value;
+  CAMLreturn(Val_int(0));
+#endif
+}
+
 /* The image seen through the retained witness handle itself: present only
    while the witness's process object still names an executable. Separating
    this from the fresh by-PID lookup distinguishes a genuinely alive
