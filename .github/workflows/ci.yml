@@ -110,6 +110,10 @@ jobs:
         ocaml: ["5.4.1", "5.5.0"]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      # Every matrix platform supports the full native Dir_cap substrate; a
+      # regression to Unsupported must fail the suite, not silently skip.
+      OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Python drives the @schema-validation and dogfood rules; @runtest is
@@ -137,6 +141,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
