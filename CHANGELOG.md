@@ -84,11 +84,13 @@ for its CLI, TOML schema, and JSON schema.
 - The directory-capability store is native on Linux and macOS: the six
   deliberately fail-closed POSIX primitives close. Directory creation commits
   with `mkdirat(0700)` and verifies kind, exact mode, effective-uid ownership,
-  and same-device parentage; publication re-verifies a retained capture-time
-  component against the still-open source inode and commits with one native
-  no-replace rename (`renameat2` on Linux, `renameatx_np` on Darwin); captured
-  deletion is a verified-name `unlinkat` with post-commit link-count release
-  evidence. Windows-only sharing guarantees are now documented per-OS: POSIX
+  and same-device parentage; captured deletion is a verified-name `unlinkat`
+  with post-commit release evidence. Linux no-replace publication binds the
+  destination straight to the still-open source inode (`linkat` over
+  `/proc/self/fd`), leaving no source name to race; where hard links are
+  unavailable, on Darwin, and for replacement, publication re-verifies the
+  retained capture-time component and commits with one native rename
+  (`renameat2`/`renameatx_np`/`renameat`). Windows-only sharing guarantees are now documented per-OS: POSIX
   capabilities pin inodes, not names, and a same-effective-uid namespace
   writer stays outside hard guarantees on both platforms. The full test
   suite — store contracts, fixture E2E, CLI lifecycle, and interrupt included

@@ -462,16 +462,21 @@ module type S = sig
       replacing rename does not satisfy this contract on any platform. On
       Windows, [System] implements both policies from the captured source and
       same-parent handles with [FileRenameInformationEx]; [Replace] selects the
-      native replace-if-present flag in that one commit attempt. POSIX retains
-      the capture-time component inside the source capability, re-verifies that
-      name against the still-open source inode immediately before the commit,
-      and commits with one native no-replace rename ([renameat2] with
-      [RENAME_NOREPLACE] on Linux, [renameatx_np] with [RENAME_EXCL] on Darwin)
-      or one plain [renameat] for [Replace]. A same-effective-uid namespace
-      writer can win the verify-to-commit window; that residual is exactly the
-      one the module preamble already excludes from hard guarantees. A
-      filesystem without a native no-replace rename fails closed with
-      [Unsupported] — the probe-then-rename emulation stays forbidden. *)
+      native replace-if-present flag in that one commit attempt. On Linux,
+      [No_replace] binds the destination straight to the still-open source inode
+      through the descriptor namespace ([linkat] over [/proc/self/fd]): no
+      source name participates in the commit, and the stale source name is then
+      consumed only while it still resolves to the published inode — a failed
+      consumption degrades to a [Published] advisory, never a retraction. Where
+      hard links are unavailable, on Darwin, and for [Replace], POSIX
+      re-verifies the retained capture-time component against the still-open
+      source inode immediately before one native commit ([renameat2] with
+      [RENAME_NOREPLACE] on Linux, [renameatx_np] with [RENAME_EXCL] on Darwin,
+      plain [renameat] for [Replace]); a same-effective-uid namespace writer can
+      win that verify-to-commit window, the residual the module preamble already
+      excludes from hard guarantees. A filesystem without a native no-replace
+      primitive fails closed with [Unsupported] — the probe-then-rename
+      emulation stays forbidden. *)
 
   val unlink_if_identity :
     dir ->
@@ -650,13 +655,17 @@ module System : S
     calls native [NtSetInformationFile] with [FileRenameInformationEx], that
     directory handle as [RootDirectory], and one native component; [No_replace]
     uses flags zero and [Replace] uses the documented
-    [FILE_RENAME_REPLACE_IF_EXISTS] flag. POSIX re-verifies the retained
-    component against the still-open source inode immediately before one native
-    commit: [renameat2(RENAME_NOREPLACE)] on Linux, [renameatx_np(RENAME_EXCL)]
-    on Darwin, or plain [renameat] for [Replace]. All are single commit
-    attempts, destination resolution cannot fall back to the process current
-    directory, and a filesystem without a native no-replace rename fails closed
-    with [Unsupported].
+    [FILE_RENAME_REPLACE_IF_EXISTS] flag. Linux no-replace publication binds the
+    destination to the still-open source inode through [/proc/self/fd] with
+    [linkat], leaving no source name to race, then consumes the stale source
+    name under identity verification (failure degrades to a [Published]
+    advisory). Where hard links are unavailable, on Darwin, and for [Replace],
+    POSIX re-verifies the retained component against the still-open source inode
+    immediately before one native commit: [renameat2(RENAME_NOREPLACE)] on
+    Linux, [renameatx_np(RENAME_EXCL)] on Darwin, or plain [renameat] for
+    [Replace]. All are single commit attempts, destination resolution cannot
+    fall back to the process current directory, and a filesystem without a
+    native no-replace primitive fails closed with [Unsupported].
 
     Root and child acquisition failures, and Windows probe-entry temporary
     handle failures, preserve the action as primary and append every terminal
