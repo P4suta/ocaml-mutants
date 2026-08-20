@@ -36,12 +36,24 @@ let get_failure = function
   | Ok value -> value
   | Error (failure : C.failure) -> fail_error (C.issue_error failure.primary)
 
+(* An [Unsupported] primitive normally skips its test, which is right for a
+   platform that genuinely lacks the primitive — and silently wrong for one that
+   is supposed to have it. CI sets this variable on every fully native platform
+   so a regression to Unsupported fails loudly instead of shrinking coverage. *)
+let skip_unsupported (error : C.error) =
+  match Sys.getenv_opt "OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE" with
+  | None | Some "" | Some "0" -> Alcotest.skip ()
+  | Some _ ->
+      Alcotest.failf "native support required but %s returned Unsupported (%s)"
+        (C.operation_name error.operation)
+        error.native_code
+
 let acquire_lock = function
   | Ok (`Acquired lock) -> lock
   | Ok `Busy -> Alcotest.fail "lock unexpectedly busy"
   | Error (failure : C.failure) ->
       let error = C.issue_error failure.primary in
-      if error.class_ = C.Unsupported then Alcotest.skip ()
+      if error.class_ = C.Unsupported then skip_unsupported error
       else fail_error error
 
 let expect_lock_busy = function
@@ -1820,7 +1832,7 @@ let publication_handle directory name =
   | Ok file -> file
   | Error failure ->
       let error = C.issue_error failure.primary in
-      if error.class_ = C.Unsupported then Alcotest.skip ()
+      if error.class_ = C.Unsupported then skip_unsupported error
       else fail_error error
 
 let expect_not_published expected = function

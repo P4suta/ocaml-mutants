@@ -143,10 +143,15 @@
 
 (test
  (name dir_cap_system_contract_tests)
- (libraries ocaml_mutants_engine alcotest unix))
+ (libraries ocaml_mutants_engine alcotest unix)
+ ; Toggling the strict no-silent-skip mode must rerun the suite.
+ (deps
+  (env_var OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE)))
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE))
  (action
   (run %{exe:dir_cap_system_contract_tests.exe})))
 
