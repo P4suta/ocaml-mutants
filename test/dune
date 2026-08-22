@@ -7,6 +7,7 @@
 (rule
  (alias dogfood-fast)
  (deps
+  (env_var OCAML_MUTANTS_ACTIVE)
   (source_tree fixtures/basic))
  (action
   (run %{exe:unit_tests.exe})))
@@ -17,6 +18,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:operator_spec_contract_tests.exe})))
 
@@ -30,6 +33,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:frontend_discovery_contract_tests.exe})))
 
@@ -39,6 +44,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:config_contract_tests.exe})))
 
@@ -48,6 +55,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:glob_contract_tests.exe})))
 
@@ -57,6 +66,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:process_contract_tests.exe})))
 
@@ -66,6 +77,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:changed_contract_tests.exe})))
 
@@ -75,6 +88,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:dune_adapter_contract_tests.exe})))
 
@@ -84,6 +99,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:baseline_contract_tests.exe})))
 
@@ -93,6 +110,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:reservation_contract_tests.exe})))
 
@@ -102,6 +121,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:maintenance_lease_contract_tests.exe})))
 
@@ -111,6 +132,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:report_contract_tests.exe})))
 
@@ -120,6 +143,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:run_report_consistency_contract_tests.exe})))
 
@@ -129,6 +154,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:cache_fs_contract_tests.exe})))
 
@@ -138,6 +165,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:dir_cap_contract_tests.exe})))
 
@@ -151,6 +180,7 @@
 (rule
  (alias dogfood-fast)
  (deps
+  (env_var OCAML_MUTANTS_ACTIVE)
   (env_var OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE))
  (action
   (run %{exe:dir_cap_system_contract_tests.exe})))
@@ -161,6 +191,8 @@
 
 (rule
  (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:workspace_snapshot_contract_tests.exe})))
 
@@ -191,6 +223,8 @@
 
 (rule
  (alias dogfood-full)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:expectation_contract_tests.exe} %{exe:../bin/main.exe})))
 
@@ -202,6 +236,8 @@
 
 (rule
  (alias dogfood-full)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:cli_lifecycle_contract_tests.exe} %{exe:../bin/main.exe})))
 
@@ -216,6 +252,8 @@
 
 (rule
  (alias dogfood-full)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
  (action
   (run %{exe:cli_interrupt_contract_tests.exe} %{exe:../bin/main.exe})))
 
@@ -251,6 +289,7 @@
 (rule
  (alias dogfood-full)
  (deps
+  (env_var OCAML_MUTANTS_ACTIVE)
   (source_tree fixtures/basic)
   (source_tree fixtures/baseline-failure)
   (source_tree fixtures/custom-command)
@@ -305,6 +344,7 @@
 (rule
  (alias dogfood-full)
  (deps
+  (env_var OCAML_MUTANTS_ACTIVE)
   validate_schemas.py
   ../schema/catalog-v1.schema.json
   ../schema/run-report-v1.schema.json

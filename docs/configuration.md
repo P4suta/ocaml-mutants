@@ -57,7 +57,14 @@ directory = "team-cache"
   the compatibility spelling for one stage and cannot be combined with
   `test.stages`.
 - `test.stages`: ordered, uniquely named command rows. Stages fail fast for each
-  mutant.
+  mutant. Every stage command must rerun its tests when `OCAML_MUTANTS_ACTIVE`
+  changes: mutants dispatch through that environment variable, and Dune only
+  tracks it where a rule declares `(deps (env_var OCAML_MUTANTS_ACTIVE))`. An
+  alias build without that declaration is satisfied from cache after its first
+  success, silently reducing the stage to a no-op — detection still happens in
+  a later `--force` stage, but the fast-kill speedup is lost. Use
+  `dune runtest --force`, or declare the environment-variable dependency on
+  every test rule the alias reaches.
 - `test.timeout`: positive seconds. If omitted, the timeout is
   `max(10 seconds, slowest observed baseline × 5)`. An explicit timeout at or
   below the slowest observed baseline is rejected before mutation execution.
