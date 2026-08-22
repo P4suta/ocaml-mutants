@@ -44,6 +44,15 @@ for its CLI, TOML schema, and JSON schema.
   every subcommand. Both accept `--path PATH` (default `.`) to name the
   workspace. As a consequence, a malformed `.ocaml-mutants.toml` is now a usage
   error for these commands instead of being silently ignored.
+- Alias-based test stages actually rerun per mutant: every
+  `@dogfood-fast`/`@dogfood-full` rule now declares
+  `(deps (env_var OCAML_MUTANTS_ACTIVE))`. Dune does not track environment
+  variables unless a rule declares them, so after the first successful mutant
+  an alias build was satisfied from cache and the fast stage silently became a
+  no-op — every mutant fell through to the slow `--force` stage. Detection
+  stayed correct (the full stage reruns everything), but the staged speedup
+  was lost. The `test.stages` documentation now states this requirement for
+  user projects.
 
 ### Changed
 
