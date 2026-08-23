@@ -407,6 +407,60 @@ let test_execution_evidence_is_self_consistent () =
        (map_member "stdout" (replace_member "total_bytes" (`Int 99)))
        encoded)
 
+let test_capture_is_utf8_safe_and_retains_raw_identity () =
+  let raw = "valid:\226\152\186 invalid:\240\130\152\186\n" in
+  let capture = Engine.Run_store.captured raw in
+  Alcotest.(check string)
+    "invalid bytes are replaced without shifting byte offsets"
+    "valid:\226\152\186 invalid:????\n" capture.contents;
+  Alcotest.(check int)
+    "every invalid byte is counted" 4 capture.encoding_errors;
+  Alcotest.(check string)
+    "the exact retained raw bytes remain digest-addressable"
+    "213465931796ffb52be0dd7277731540263d8393429bd3060d4bf694daf2a6af"
+    capture.retained_raw_sha256;
+  Alcotest.(check int)
+    "sanitization preserves retained byte length" (String.length raw)
+    (String.length capture.contents);
+  let base = base_run () in
+  let first = List.hd base.results in
+  let encoded =
+    Engine.Run_store.run_to_yojson
+      { base with results = { first with stdout = capture } :: List.tl base.results }
+  in
+  let open Yojson.Safe.Util in
+  let encoded_capture = encoded |> member "mutants" |> index 0 |> member "stdout" in
+  Alcotest.(check string)
+    "JSON contains only valid UTF-8 evidence" capture.contents
+    (encoded_capture |> member "contents" |> to_string);
+  Alcotest.(check int)
+    "JSON records encoding damage" 4
+    (encoded_capture |> member "encoding_errors" |> to_int);
+  Alcotest.(check string)
+    "JSON records the raw identity" capture.retained_raw_sha256
+    (encoded_capture |> member "retained_raw_sha256" |> to_string);
+  check_round_trip "capture with invalid raw bytes"
+    { base with results = { first with stdout = capture } :: List.tl base.results };
+  reject "capture with malformed raw digest"
+    (map_first "mutants"
+       (map_member "stdout"
+          (replace_member "retained_raw_sha256" (`String "not-a-digest")))
+       encoded);
+  reject "capture with negative encoding error count"
+    (map_first "mutants"
+       (map_member "stdout" (replace_member "encoding_errors" (`Int (-1))))
+       encoded);
+  reject "lossless capture with contradictory raw digest"
+    (map_first "mutants"
+       (map_member "stderr"
+          (replace_member "retained_raw_sha256" (`String (String.make 64 '0'))))
+       encoded);
+  reject "capture containing ill-formed JSON text bytes"
+    (map_first "mutants"
+       (map_member "stdout"
+          (replace_member "contents" (`String "\240\130\152\186")))
+       encoded)
+
 let timed_out_mutant =
   mutant ~path:"lib/timed_out.ml" ~source:"true" ~rule_name:"true-to-false@1"
     ~replacement:"false"
@@ -456,5 +510,7 @@ let () =
             test_derived_mutant_fields_are_validated;
           Alcotest.test_case "execution evidence is self-consistent" `Quick
             test_execution_evidence_is_self_consistent;
+          Alcotest.test_case "capture is UTF-8 safe and raw-addressed" `Quick
+            test_capture_is_utf8_safe_and_retains_raw_identity;
         ] );
     ]

@@ -41,13 +41,7 @@ let stages evidence =
 let slowest (evidence : evidence) = evidence.slowest
 let was_interrupted incomplete = incomplete.kind = Cancellation
 
-let default_command command =
-  Core.Nonempty_argv.to_list command = [ "dune"; "runtest"; "--force" ]
-
-let test_command command build_dir =
-  if default_command command then
-    [ "dune"; "runtest"; "--build-dir"; build_dir; "--force" ]
-  else Core.Nonempty_argv.to_list command
+let test_command = Test_command.resolve
 
 let slowest_duration = function
   | [] -> None
