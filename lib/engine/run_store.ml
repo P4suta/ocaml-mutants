@@ -4374,9 +4374,9 @@ let list_runs (store : t) =
 let list_runs_best_effort (store : t) =
   let rec load loaded rejected = function
     | [] -> (List.rev loaded, List.rev rejected)
-    | id :: rest ->
+    | id :: rest -> (
         let encoded = Core.Run_id.to_string id in
-        (match load_run store encoded with
+        match load_run store encoded with
         | Ok run -> load (run :: loaded) rejected rest
         | Error error -> load loaded ((encoded, error) :: rejected) rest)
   in

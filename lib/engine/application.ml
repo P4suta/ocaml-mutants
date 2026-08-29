@@ -363,8 +363,7 @@ module Make (Services : SERVICES) = struct
              (abandon store reservation @ finish_subscription ()))
     | Prepared (store, reservation, preparation) -> (
         let prepared_resolution =
-          resolve preparation.verdict
-            ~cleanup_errors:preparation.cleanup_errors
+          resolve preparation.verdict ~cleanup_errors:preparation.cleanup_errors
         in
         let resolution, committed =
           match
@@ -412,12 +411,9 @@ module Make (Services : SERVICES) = struct
                      (Error.create ~phase:Error.Cleanup
                         ~cause:Error.Invariant_violation
                         ~context:
-                          [
-                            ( "contract",
-                              "process-lifetime-unsubscribe-total" );
-                          ]
-                        "process-lifetime cancellation unsubscribe violated its \
-                         totality contract")
+                          [ ("contract", "process-lifetime-unsubscribe-total") ]
+                        "process-lifetime cancellation unsubscribe violated \
+                         its totality contract")
                      subscription_errors))
         | Error reporting ->
             let primary = commit_failure resolution reporting in
@@ -426,8 +422,9 @@ module Make (Services : SERVICES) = struct
                  (subscription_errors @ abandon store reservation)))
 
   let run_with_cancel ~cancel ~root ~config ~fresh ~selection ~output =
-    run_controlled ~cancel ~finish_subscription:(fun () -> []) ~root ~config
-      ~fresh ~selection ~output
+    run_controlled ~cancel
+      ~finish_subscription:(fun () -> [])
+      ~root ~config ~fresh ~selection ~output
 
   let run ~root ~config ~fresh ~selection ~output =
     let cancel = Cancel.create () in

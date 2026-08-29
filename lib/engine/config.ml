@@ -793,10 +793,9 @@ let decode root =
             driver =
               (match (version, driver, command, stages) with
               | _, Some driver, _, _ -> driver
-              | 1, None, _, Some _
-              | 1, None, Some _, None ->
-                  (* v1 had no driver abstraction: an explicitly configured
-                     argv or ordered stage list was always executed verbatim.
+              | 1, None, _, Some _ | 1, None, Some _, None ->
+                  (* v1 had no driver abstraction: an explicitly configured argv
+                     or ordered stage list was always executed verbatim.
                      Preserve that behavior while normalizing the in-memory
                      representation to v2, so migration cannot silently turn
                      [dune build] into the inventory-driven [@runtest] plan. *)

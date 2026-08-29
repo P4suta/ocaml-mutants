@@ -92,8 +92,15 @@ let store_env =
   at_exit (fun () -> ignore (Util.remove_tree root));
   [ ((if Sys.win32 then "LOCALAPPDATA" else "XDG_CACHE_HOME"), Some root) ]
 
+(* Dune's POSIX sandbox presents declared dependency files as symlinks into the
+   default build context. Resolve the dependency itself before taking its parent
+   so the fixture root is the complete build-context tree, rather than a sandbox
+   directory whose children legitimately point outside that directory. *)
+let fixture_root fixture_project =
+  fixture_project |> Unix.realpath |> Filename.dirname
+
 let check_list ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   let before =
     match Util.digest_tree ~skip:Workspace_snapshot.default_skip fixture with
     | Ok value -> value
@@ -318,7 +325,7 @@ let check_list ~cli fixture_project =
   if before <> after then fail "ocaml-mutants changed the source fixture"
 
 let check_custom_command ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   let before =
     match Util.digest_tree ~skip:Workspace_snapshot.default_skip fixture with
     | Ok value -> value
@@ -429,7 +436,7 @@ let parse_json label process =
     fail "invalid %s JSON: %s\n%s" label message process.stdout
 
 let check_timeout ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   let catalog =
     Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:store_env
       [ cli; "list"; "."; "--json"; "--no-color" ]
@@ -471,7 +478,7 @@ let check_timeout ~cli fixture_project =
    still compiles under the default fatal-warning dev profile, and pins the
    all-survivors score at exactly 0. *)
 let check_match_run ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   let process =
     Process_supervisor.run ~timeout:600. ~cwd:fixture ~env:store_env
       [ cli; "run"; "."; "--json"; "--fresh"; "--jobs"; "1" ]
@@ -496,7 +503,7 @@ let check_match_run ~cli fixture_project =
     fail "match run without tests did not score exactly zero"
 
 let check_baseline_failure ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   let explicit_timeout_seconds = 17. in
   let process =
     Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:store_env
@@ -534,7 +541,7 @@ let check_baseline_failure ~cli fixture_project =
   then fail "baseline failure report used the wrong phase"
 
 let check_dirty_git_workspace ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   match
     Workspace_snapshot.with_snapshot fixture (fun snapshot ->
         let root = Workspace_snapshot.root snapshot in

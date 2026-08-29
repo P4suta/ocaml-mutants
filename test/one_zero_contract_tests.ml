@@ -514,7 +514,9 @@ let test_dune_driver_plan_and_private_cache () =
     "auto resolves to dune" true
     (effective.test.driver = Engine.Config.Dune_driver);
   let stage_names (config : Engine.Config.t) =
-    List.map (fun (stage : Engine.Config.stage) -> stage.name) config.test.stages
+    List.map
+      (fun (stage : Engine.Config.stage) -> stage.name)
+      config.test.stages
   in
   Alcotest.(check (list string))
     "individual alias followed by exhaustive fallback"
@@ -535,10 +537,7 @@ let test_dune_driver_plan_and_private_cache () =
     Engine.Runner.For_testing.classify_exhaustive_hits effective
       [
         { Engine.Run_store.test = individual.name; mutant_ids = [ id ] };
-        {
-          Engine.Run_store.test = "dune:@runtest";
-          mutant_ids = [ id; other ];
-        };
+        { Engine.Run_store.test = "dune:@runtest"; mutant_ids = [ id; other ] };
       ]
   in
   let fallback_hits =
@@ -555,7 +554,8 @@ let test_dune_driver_plan_and_private_cache () =
   in
   Alcotest.(check (list string))
     "strict prioritizes covering test then proves exhaustive remainder"
-    [ individual.name; "dune:@runtest" ] strict_stages;
+    [ individual.name; "dune:@runtest" ]
+    strict_stages;
   Alcotest.(check bool) "strict evidence is complete" false strict_omitted;
   let fast =
     {
@@ -584,7 +584,8 @@ let test_dune_driver_plan_and_private_cache () =
     }
   in
   let custom, custom_baseline =
-    get_ok_engine (Engine.Runner.For_testing.resolved_test_plan custom [ described ])
+    get_ok_engine
+      (Engine.Runner.For_testing.resolved_test_plan custom [ described ])
   in
   Alcotest.(check bool)
     "auto preserves a custom command driver" true
@@ -608,11 +609,7 @@ let test_tui_model_and_html_safety () =
     "NO_COLOR strips SGR but preserves terminal protocols"
     "ared\027[>4;1m\027[?25l\027[0 qz"
     (Engine.Tui.For_testing.monochrome
-       [
-         "a\027[38;2;";
-         "255;0;0mred\027[>4";
-         ";1m\027[?25l\027[0 q\027[mz";
-       ]);
+       [ "a\027[38;2;"; "255;0;0mred\027[>4"; ";1m\027[?25l\027[0 q\027[mz" ]);
   Alcotest.(check string)
     "literal redaction masks every match" "*****=* *****=*"
     (Engine.Runner.For_testing.redact [ "token"; "a" ] "token=a token=a");
@@ -715,8 +712,7 @@ let test_tui_model_and_html_safety () =
          { exit_code = 0; runs = Some [ older; evidence ]; error = None })
       live
   in
-  Alcotest.(check int)
-    "finished run reselected by id" 1 refreshed.history_index;
+  Alcotest.(check int) "finished run reselected by id" 1 refreshed.history_index;
   Alcotest.(check string)
     "finished run is authoritative report" evidence_id
     (match refreshed.run with
@@ -803,10 +799,13 @@ let test_tui_history_isolates_corrupt_reports () =
         let value = run "stored" [ result (mutant_at 0) Core.Outcome.Killed ] in
         { value with metadata = { value.metadata with id } }
       in
-      let staged = get_ok_engine (Engine.Run_store.stage_run store reservation) in
+      let staged =
+        get_ok_engine (Engine.Run_store.stage_run store reservation)
+      in
       let finalization = get_ok_engine (Engine.Run_store.finalize_run staged) in
       Alcotest.(check int)
-        "publication cleanup" 0 (List.length finalization.cleanup_errors);
+        "publication cleanup" 0
+        (List.length finalization.cleanup_errors);
       let published =
         get_ok_engine
           (Engine.Run_store.publish_run finalization.publication valid)
@@ -824,8 +823,7 @@ let test_tui_history_isolates_corrupt_reports () =
       let loaded, rejected = Engine.Run_store.list_runs_best_effort store in
       Alcotest.(check int) "valid history retained" 1 (List.length loaded);
       Alcotest.(check string)
-        "valid run identity"
-        (Core.Run_id.to_string id)
+        "valid run identity" (Core.Run_id.to_string id)
         (match loaded with
         | [ run ] -> Core.Run_id.to_string run.metadata.id
         | _ -> "missing");

@@ -236,8 +236,7 @@ let run_helper argv =
             | Unix.WEXITED code -> code
             | Unix.WSIGNALED signal | Unix.WSTOPPED signal ->
                 signal_exit_code_base + signal
-          else
-            Unix.execvpe request.target.(0) request.target target_environment)
+          else Unix.execvpe request.target.(0) request.target target_environment)
       with exn ->
         prerr_endline ("ocaml-mutants process helper: " ^ Printexc.to_string exn);
         helper_failure_exit_code)
@@ -490,8 +489,7 @@ let run ?timeout ?(cancelled = fun () -> false) ?cancel
           updated_environment
             (env
             @ [
-                (helper_environment, None);
-                (helper_active_environment, Some "1");
+                (helper_environment, None); (helper_active_environment, Some "1");
               ])
         in
         let job = if Sys.win32 then job_create () else Nativeint.zero in

@@ -6,10 +6,7 @@ type live_status =
   | Cancelling of Cancel.t
   | Finished of int
 
-type live_result = {
-  result : Run_store.mutant_result;
-  coverage : string;
-}
+type live_result = { result : Run_store.mutant_result; coverage : string }
 
 type model = {
   run : Run_store.run option;
@@ -55,6 +52,7 @@ val init :
 
 val init_history :
   ?width:int -> ?height:int -> ?color:bool -> Run_store.run list -> model
+
 val visible_results : model -> Run_store.mutant_result list
 val update_model : msg -> model -> model
 val update : msg -> model -> model * msg Mosaic.Cmd.t
@@ -67,12 +65,9 @@ val run_interactive :
   ?initial_warnings:(string * string) list ->
   ?color:bool ->
   Run_store.run list ->
-  reload:
-    (unit -> (Run_store.run list * (string * string) list, Error.t) result) ->
+  reload:(unit -> (Run_store.run list * (string * string) list, Error.t) result) ->
   start:
-    (cancel:Cancel.t ->
-    emit:(Event_bus.event -> unit) ->
-    (int, Error.t) result) ->
+    (cancel:Cancel.t -> emit:(Event_bus.event -> unit) -> (int, Error.t) result) ->
   unit
 
 module For_testing : sig

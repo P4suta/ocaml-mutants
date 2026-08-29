@@ -91,7 +91,8 @@ let instrument ~hit_owner ~source mutants =
           (Printf.sprintf
              "module %s = struct\n\
              \  let process_helper =\n\
-             \    Stdlib.Sys.getenv_opt \"OCAML_MUTANTS_PROCESS_HELPER\" = Some \"1\"\n\
+             \    Stdlib.Sys.getenv_opt \"OCAML_MUTANTS_PROCESS_HELPER\" = \
+              Some \"1\"\n\
              \  let active =\n\
              \    if process_helper then None\n\
              \    else Stdlib.Sys.getenv_opt \"OCAML_MUTANTS_ACTIVE\"\n\

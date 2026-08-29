@@ -78,7 +78,10 @@ let source_digest layout =
   get_ok "cannot digest source workspace"
     (Engine.Util.digest_tree ~skip layout.workspace)
 
-let cli_deadline_seconds = 180.
+(* A fresh Windows/OCaml 5.4 runner can spend more than three minutes building
+   the first catalog. This is only the outer harness guard; the behavioral
+   timeout asserted below remains [mutant_timeout_seconds]. *)
+let cli_deadline_seconds = 600.
 
 let run_cli ?(extra_env = []) ~cli layout arguments =
   Engine.Process_supervisor.run ~timeout:cli_deadline_seconds
@@ -505,11 +508,16 @@ let choose value = if value then first else second
             if String.equal line "" then None
             else
               let event = Yojson.Safe.from_string line in
-              if String.equal (event |> member "type" |> to_string) "mutant-settled"
+              if
+                String.equal
+                  (event |> member "type" |> to_string)
+                  "mutant-settled"
               then Some event
               else None)
       in
-      let settled = singleton "confirmed timeout settled events" settled_events in
+      let settled =
+        singleton "confirmed timeout settled events" settled_events
+      in
       expect_string "timeout settles only after serial confirmation" "timeout"
         (settled |> member "payload" |> member "outcome");
       let timeout_report =

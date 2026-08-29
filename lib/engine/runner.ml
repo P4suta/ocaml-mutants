@@ -61,8 +61,7 @@ let test_command = Test_command.resolve
 
 let mutant_environment ~root mutant =
   [
-    ( "OCAML_MUTANTS_ACTIVE",
-      Some (Core.Mutant.Id.full (Core.Mutant.id mutant)) );
+    ("OCAML_MUTANTS_ACTIVE", Some (Core.Mutant.Id.full (Core.Mutant.id mutant)));
     (* A nested ocaml-mutants process may itself be running under an outer
        readiness probe. Mutant attempts do not collect coverage, so retaining
        that outer hit file would mix the inner catalog into the outer one. *)
@@ -119,7 +118,9 @@ let classify_exhaustive_hits config hit_map =
     List.iter
       (fun (entry : Run_store.hit_map_entry) ->
         if not (String.equal entry.test dune_exhaustive_stage_name) then
-          List.iter (fun id -> Hashtbl.replace classified id ()) entry.mutant_ids)
+          List.iter
+            (fun id -> Hashtbl.replace classified id ())
+            entry.mutant_ids)
       hit_map;
     List.map
       (fun (entry : Run_store.hit_map_entry) ->
@@ -283,7 +284,7 @@ let argv_exn values =
 
 let safe_test_component value =
   value <> "" && value <> "." && value <> ".."
-  && not (String.contains value '/')
+  && (not (String.contains value '/'))
   && not (String.contains value '\\')
 
 let dune_stage_of_test (test : Dune_adapter.described_test) =
@@ -326,10 +327,7 @@ let resolve_test_plan config tests =
   in
   if not use_dune then
     let config =
-      {
-        config with
-        test = { config.test with driver = Config.Command_driver };
-      }
+      { config with test = { config.test with driver = Config.Command_driver } }
     in
     Ok { config; baseline_config = config }
   else
@@ -363,10 +361,7 @@ let resolve_test_plan config tests =
     in
     let config = { config with test = effective_test } in
     let baseline_config =
-      {
-        config with
-        test = { effective_test with stages = [ exhaustive ] };
-      }
+      { config with test = { effective_test with stages = [ exhaustive ] } }
     in
     Ok { config; baseline_config }
 
@@ -393,10 +388,9 @@ let analyze ~cancel ~root ~config ~selection ~snapshot =
             Dune_adapter.describe_tests ~cancel ~root:(Workspace.root snapshot)
           with
           | Error error -> fail error
-          | Ok tests ->
+          | Ok tests -> (
               let* test_plan = resolve_test_plan config tests in
               let config = test_plan.config in
-              (
               match
                 Dune_adapter.build_analysis ~cancel
                   ~root:(Workspace.root snapshot)
@@ -607,8 +601,7 @@ let create_shard_plan ~cancel ~root ~config ~selection ~shard_count ~durations =
       let* analysis = analyze ~cancel ~root ~config ~selection ~snapshot in
       Shard_plan.create ~workspace_digest:analysis.workspace_digest
         ~toolchain:analysis.toolchain ~config:analysis.config
-        ~catalog:analysis.catalog
-        ~shard_count ~durations
+        ~catalog:analysis.catalog ~shard_count ~durations
       |> Result.map_error (fun message ->
           Error.create ~phase:Error.Cli ~cause:Error.Invalid_input "%s" message))
 
@@ -895,8 +888,7 @@ let stages_for_mutant config hit_map mutant =
     else None
   in
   match (config.Config.execution.mode, hit_map, exhaustive) with
-  | (Config.Strict, _, Some exhaustive)
-  | (Config.Fast, [], Some exhaustive) ->
+  | Config.Strict, _, Some exhaustive | Config.Fast, [], Some exhaustive ->
       let covering =
         List.filter
           (fun (stage : Config.stage) ->
@@ -904,8 +896,8 @@ let stages_for_mutant config hit_map mutant =
           covering
       in
       (* The final @runtest alias executes every Dune-owned test rule. It is the
-         exhaustive remainder, so individual non-covering aliases need not run
-         a second time before it. *)
+         exhaustive remainder, so individual non-covering aliases need not run a
+         second time before it. *)
       { stages = covering @ [ exhaustive ]; omitted = false }
   | Config.Fast, _, Some exhaustive
     when List.exists
@@ -913,8 +905,7 @@ let stages_for_mutant config hit_map mutant =
              String.equal stage.name exhaustive.name)
            covering ->
       { stages = [ exhaustive ]; omitted = false }
-  | Config.Fast, _, Some _ ->
-      { stages = covering; omitted = remaining <> [] }
+  | Config.Fast, _, Some _ -> { stages = covering; omitted = remaining <> [] }
   | Config.Strict, _, None | Config.Fast, [], None ->
       { stages = covering @ remaining; omitted = false }
   | Config.Fast, _, None -> { stages = covering; omitted = remaining <> [] }
@@ -987,8 +978,7 @@ let run_mutants ~cancel ~root ~config ~store ~journal ~key ~sources ~fresh
           (Event_bus.Mutant_settled
              {
                result;
-               coverage =
-                 Run_store.result_coverage_from_hit_map hit_map result;
+               coverage = Run_store.result_coverage_from_hit_map hit_map result;
              });
         Event_bus.emit
           (Event_bus.Progress
@@ -1089,8 +1079,7 @@ let run_mutants ~cancel ~root ~config ~store ~journal ~key ~sources ~fresh
     (fun () -> worker 0 ());
   let executed = Array.to_list result_slots |> List.filter_map Fun.id in
   let pending_confirmation =
-    List.length
-      (List.filter requires_timeout_confirmation executed)
+    List.length (List.filter requires_timeout_confirmation executed)
   in
   if pending_confirmation > 0 && not (Cancel.is_requested cancel) then
     Printf.eprintf "ocaml-mutants: confirming %d timeouts serially\n%!"
@@ -1191,7 +1180,8 @@ let regular_file path =
 
 let resolve_executable ~root program =
   let direct =
-    if Filename.is_relative program then Filename.concat root program else program
+    if Filename.is_relative program then Filename.concat root program
+    else program
   in
   if path_has_separator program then
     if regular_file direct then Some direct else None
@@ -1206,8 +1196,7 @@ let resolve_executable ~root program =
       if not Sys.win32 then [ "" ]
       else
         let configured =
-          Option.value (Sys.getenv_opt "PATHEXT")
-            ~default:".COM;.EXE;.BAT;.CMD"
+          Option.value (Sys.getenv_opt "PATHEXT") ~default:".COM;.EXE;.BAT;.CMD"
         in
         "" :: String.split_on_char ';' configured
     in
@@ -1222,7 +1211,7 @@ let resolve_executable ~root program =
     in
     let rec find = function
       | [] -> None
-      | directory :: rest ->
+      | directory :: rest -> (
           let directory =
             if directory = "" then root
             else if Filename.is_relative directory then
@@ -1232,11 +1221,13 @@ let resolve_executable ~root program =
           let found =
             List.find_map
               (fun extension ->
-                let candidate = Filename.concat directory (program ^ extension) in
+                let candidate =
+                  Filename.concat directory (program ^ extension)
+                in
                 if regular_file candidate then Some candidate else None)
               extensions
           in
-          (match found with Some _ as found -> found | None -> find rest)
+          match found with Some _ as found -> found | None -> find rest)
     in
     Option.fold ~none:(find directories) ~some:Option.some
       windows_current_directory
@@ -1263,8 +1254,7 @@ let suffix_after_build_context target =
   | Some offset ->
       Some (String.sub normalized offset (String.length normalized - offset))
   | None when String.starts_with ~prefix:"default/" normalized ->
-      Some
-        (String.sub normalized 8 (String.length normalized - 8))
+      Some (String.sub normalized 8 (String.length normalized - 8))
   | None -> None
 
 let direct_build_artifacts ~root (analysis : analysis) =
@@ -1279,10 +1269,12 @@ let direct_build_artifacts ~root (analysis : analysis) =
             ( "test:" ^ test.source_dir ^ "/" ^ test.name
               ^ "=unavailable:target has no default build context",
               false )
-        | Some relative ->
-            let path = Filename.concat baseline_context ("default/" ^ relative) in
+        | Some relative -> (
+            let path =
+              Filename.concat baseline_context ("default/" ^ relative)
+            in
             let label = "test:" ^ test.source_dir ^ "/" ^ test.name in
-            (match digest_file path with
+            match digest_file path with
             | Ok digest -> (label ^ "=" ^ digest, true)
             | Error message -> (label ^ "=unavailable:" ^ message, false)))
     |> List.split
@@ -1306,9 +1298,7 @@ let direct_build_artifacts ~root (analysis : analysis) =
         with Unix.Unix_error _ | Sys_error _ -> ([], false))
     |> List.split
   in
-  let ppx, ppx_complete =
-    digest_labeled_paths (List.concat ppx_paths)
-  in
+  let ppx, ppx_complete = digest_labeled_paths (List.concat ppx_paths) in
   ( tests @ ppx,
     List.for_all Fun.id
       (tests_complete @ ppx_complete @ ppx_enumeration_complete) )
@@ -1343,12 +1333,10 @@ let cache_key ~run_id ~root ~analysis ~selection ~config ~timeout =
         in
         match resolve_executable ~root program with
         | None ->
-            ( Printf.sprintf "%d:%s=unavailable:not found" index program,
-              false )
+            (Printf.sprintf "%d:%s=unavailable:not found" index program, false)
         | Some path -> (
             match digest_file path with
-            | Ok digest ->
-                (Printf.sprintf "%d:%s=%s" index program digest, true)
+            | Ok digest -> (Printf.sprintf "%d:%s=%s" index program digest, true)
             | Error message ->
                 ( Printf.sprintf "%d:%s=unavailable:%s" index program message,
                   false )))
@@ -1650,12 +1638,11 @@ let prepare_snapshot_action ~cancel ~store ~reservation ~run_id ~started_at
             (Event_bus.Phase_started
                {
                  phase = "baseline";
-                  total =
-                    Some
-                      (Core.Positive_int.to_int config.Config.test.baseline_runs
-                      * List.length
-                          analysis.baseline_config.Config.test.stages);
-                });
+                 total =
+                   Some
+                     (Core.Positive_int.to_int config.Config.test.baseline_runs
+                     * List.length analysis.baseline_config.Config.test.stages);
+               });
           match
             Baseline.run ~cancel ~root:snapshot_root
               ~config:analysis.baseline_config

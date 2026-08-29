@@ -739,15 +739,13 @@ let ui_action path id no_color color_mode =
         | Error error -> print_error error
         | Ok runs -> (
             try
-              Tui.run_history
-                ~color:(terminal_color ~no_color ~color_mode)
-                runs;
+              Tui.run_history ~color:(terminal_color ~no_color ~color_mode) runs;
               0
             with exception_ ->
               print_error
                 (Error.create ~phase:Error.Cli ~cause:Error.Io_failure
                    ~context:[ ("exception", Printexc.to_string exception_) ]
-                 "terminal UI failed")))
+                   "terminal UI failed")))
 
 let interactive_action path =
   if not (stdio_is_tty ()) then (
@@ -759,7 +757,8 @@ let interactive_action path =
     let root = Unix.realpath path in
     let history_warning (id, error) =
       ( "stored-report-invalid",
-        Format.asprintf "run %s was omitted from history: %a" id Error.pp error )
+        Format.asprintf "run %s was omitted from history: %a" id Error.pp error
+      )
     in
     let load_history () =
       match Config.load_with_metadata root with
@@ -784,9 +783,7 @@ let interactive_action path =
       | Error error -> ([], [], Some (Format.asprintf "%a" Error.pp error))
     in
     let reload () = load_history () in
-    let color =
-      terminal_color ~no_color:false ~color_mode:Color_auto
-    in
+    let color = terminal_color ~no_color:false ~color_mode:Color_auto in
     let start ~cancel ~emit =
       Event_bus.with_sink (Event_bus.callback emit) (fun () ->
           match Config.load_with_metadata root with
@@ -802,15 +799,15 @@ let interactive_action path =
                 ~fresh:false ~selection:Request.All
                 ~output:(Request.Terminal { quiet = true; color = false }))
     in
-    (try
-       Tui.run_interactive ?initial_error ~initial_warnings ~color runs ~reload
-         ~start;
-       0
-     with exception_ ->
-       print_error
-         (Error.create ~phase:Error.Cli ~cause:Error.Io_failure
-            ~context:[ ("exception", Printexc.to_string exception_) ]
-            "interactive terminal UI failed"))
+    try
+      Tui.run_interactive ?initial_error ~initial_warnings ~color runs ~reload
+        ~start;
+      0
+    with exception_ ->
+      print_error
+        (Error.create ~phase:Error.Cli ~cause:Error.Io_failure
+           ~context:[ ("exception", Printexc.to_string exception_) ]
+           "interactive terminal UI failed")
 
 let ui_command =
   let id = Arg.(value & pos 0 string "latest" & info [] ~docv:"RUN_ID") in
@@ -1513,9 +1510,7 @@ let subcommands =
     cache_command;
   ]
 
-let default_action () =
-  interactive_action "."
-
+let default_action () = interactive_action "."
 let default_term = Term.(const default_action $ const ())
 
 let main_command =

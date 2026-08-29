@@ -440,7 +440,8 @@ let test_mutant_id_prefix_validation () =
 
 let instrument source mutants =
   Core.Instrumentation.instrument ~hit_owner:(String.make 64 'a')
-    ~source:(Core.Source.of_string source) mutants
+    ~source:(Core.Source.of_string source)
+    mutants
 
 let test_instrumentation_guard_shape () =
   let source = "true" in
@@ -494,7 +495,8 @@ let test_instrumentation_hit_owner () =
   let source = prefix ^ "true\nlet () = ignore observed\n" in
   let candidate =
     mutant ~source ~start_byte:(String.length prefix)
-      ~end_byte:(String.length prefix + 4) "false"
+      ~end_byte:(String.length prefix + 4)
+      "false"
   in
   let owner = String.make 64 'a' in
   let rendered =
@@ -541,8 +543,7 @@ let test_instrumentation_hit_owner () =
               [
                 ("OCAML_MUTANTS_ACTIVE", None);
                 ("OCAML_MUTANTS_HIT_FILE", Some hit_path);
-                ( Core.Instrumentation.hit_owner_environment,
-                  Some supplied_owner );
+                (Core.Instrumentation.hit_owner_environment, Some supplied_owner);
               ]
             [ executable ]
         in
@@ -2006,8 +2007,7 @@ let test_application_cancellation_and_signal_restoration () =
   let controlled_error =
     error_result "caller-owned cancellation"
       (Fake_application.run_with_cancel ~cancel:controlled_cancel ~root:"."
-         ~config:Engine.Config.defaults ~fresh:true
-         ~selection:Engine.Runner.All
+         ~config:Engine.Config.defaults ~fresh:true ~selection:Engine.Runner.All
          ~output:(Engine.Runner.Terminal { quiet = true; color = false }))
   in
   Alcotest.(check int)
@@ -2456,7 +2456,8 @@ let test_process_capture_and_timeout () =
         helper_environment.stderr);
   Alcotest.(check string)
     "helper marker is private and target hit file survives"
-    "absent|target-hit-file" (String.trim helper_environment.stdout);
+    "absent|target-hit-file"
+    (String.trim helper_environment.stdout);
   let capture_capacity = Engine.Process_supervisor.capture_capacity_bytes in
   let payload_bytes = capture_capacity + 1024 in
   let captured =
@@ -3043,7 +3044,9 @@ let () =
           | Some value -> "present:" ^ value
         in
         let hit_file =
-          Option.value (Sys.getenv_opt "OCAML_MUTANTS_HIT_FILE") ~default:"absent"
+          Option.value
+            (Sys.getenv_opt "OCAML_MUTANTS_HIT_FILE")
+            ~default:"absent"
         in
         Printf.printf "%s|%s\n%!" marker hit_file
     | Some "grandchild" ->

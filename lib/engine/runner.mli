@@ -107,7 +107,7 @@ module For_testing : sig
   val resolved_test_plan :
     Config.t ->
     Dune_adapter.described_test list ->
-    ((Config.t * Config.t), Error.t) result
+    (Config.t * Config.t, Error.t) result
   (** Effective execution config and its baseline-only config. Dune drivers use
       individual [runtest-NAME] aliases plus one exhaustive [@runtest]
       remainder; the baseline executes that exhaustive alias once. *)
@@ -121,11 +121,9 @@ module For_testing : sig
   (** False only for an initial timeout that still requires its serial retry. *)
 
   val mutant_environment :
-    root:string ->
-    Ocaml_mutants_core.Mutant.t ->
-    (string * string option) list
-  (** Explicit attempt environment. In particular, inherited readiness hit
-      files are removed before executing a mutant. *)
+    root:string -> Ocaml_mutants_core.Mutant.t -> (string * string option) list
+  (** Explicit attempt environment. In particular, inherited readiness hit files
+      are removed before executing a mutant. *)
 
   val emit_after_publish :
     write:(string -> unit) -> flush:(unit -> unit) -> string -> Error.t list

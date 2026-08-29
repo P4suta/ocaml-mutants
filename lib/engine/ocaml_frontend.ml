@@ -698,8 +698,8 @@ let initialize_compiler_path () =
      runtime. Since OCaml 5.0 it can discover [stdlib/unix] lazily, but that is
      a deprecated compatibility fallback and emits an alert on every analysis.
      Register the directory explicitly, exactly as [-I +unix] would. The
-     engine's own [Config] module shadows compiler-libs' module of that name,
-     so derive the standard-library root from the initialized public path. *)
+     engine's own [Config] module shadows compiler-libs' module of that name, so
+     derive the standard-library root from the initialized public path. *)
   Compmisc.init_path ();
   Load_path.get_path_list ()
   |> List.find_opt (fun directory ->
@@ -783,8 +783,7 @@ let instrument_files ~root catalog =
         let mutants = Hashtbl.find by_path path in
         let* instrumented =
           match
-            Core.Instrumentation.instrument
-              ~hit_owner
+            Core.Instrumentation.instrument ~hit_owner
               ~source:(Core.Source.of_string source)
               mutants
           with

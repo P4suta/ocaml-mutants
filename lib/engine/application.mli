@@ -127,8 +127,9 @@ module Make (Services : SERVICES) : sig
     output:Application_request.output ->
     (int, Error.t) result
   (** Runs the same reservation, snapshot, publication, and cleanup lifecycle as
-      [run] with a caller-owned cancellation token. The caller is responsible for
-      translating its input or process-lifetime events into [Cancel.request]. *)
+      [run] with a caller-owned cancellation token. The caller is responsible
+      for translating its input or process-lifetime events into
+      [Cancel.request]. *)
 
   val run :
     root:string ->

@@ -76,7 +76,8 @@ let backend_diagnostic () =
       | Invalid_argument message -> Error message
   in
   Result.map
-    (fun detail -> if monochrome then detail ^ " / NO_COLOR monochrome" else detail)
+    (fun detail ->
+      if monochrome then detail ^ " / NO_COLOR monochrome" else detail)
     result
 
 type filter = Actionable | All | Killed
@@ -87,10 +88,7 @@ type live_status =
   | Cancelling of Cancel.t
   | Finished of int
 
-type live_result = {
-  result : Run_store.mutant_result;
-  coverage : string;
-}
+type live_result = { result : Run_store.mutant_result; coverage : string }
 
 type model = {
   run : Run_store.run option;
@@ -252,7 +250,8 @@ let update_live_event event model =
         | Core.Outcome.Killed -> "killed"
         | Core.Outcome.Survived -> "survived"
         | Core.Outcome.Timeout ->
-            if result.timeout_confirmed then "timeout" else "timeout-unconfirmed"
+            if result.timeout_confirmed then "timeout"
+            else "timeout-unconfirmed"
         | Core.Outcome.Inconclusive _ -> "inconclusive"
         | Core.Outcome.Error _ -> "error"
       in
@@ -267,8 +266,8 @@ let update_live_event event model =
       {
         model with
         live_warnings =
-          if List.mem warning model.live_warnings then model.live_warnings
-          else take 5 (warning :: model.live_warnings);
+          (if List.mem warning model.live_warnings then model.live_warnings
+           else take 5 (warning :: model.live_warnings));
       }
   | Event_bus.Run_finished { exit_code } ->
       { model with live_phase = Some (finish_phase exit_code) }
@@ -475,7 +474,9 @@ let live_summary model =
         model.live_settled
 
 let live_notice model =
-  let error = Option.map (fun message -> "error: " ^ sanitize message) model.live_error in
+  let error =
+    Option.map (fun message -> "error: " ^ sanitize message) model.live_error
+  in
   let warning =
     match model.live_warnings with
     | [] -> None
@@ -499,7 +500,8 @@ let view model =
     | None -> "ocaml-mutants 1.0 — no stored runs"
     | Some run ->
         Printf.sprintf "%s  history %d/%d" (summary_line run)
-          (model.history_index + 1) (Array.length model.history)
+          (model.history_index + 1)
+          (Array.length model.history)
   in
   let header =
     match model.live_status with
@@ -527,9 +529,7 @@ let view model =
         ~flex_grow:1.
         [ text (title ^ ":"); text ~wrap contents ]
   in
-  let list_panel =
-    panel ~title:"Results" ~wrap:`None (result_list model)
-  in
+  let list_panel = panel ~title:"Results" ~wrap:`None (result_list model) in
   let detail_panel =
     panel ~title:"Evidence and diff" ~wrap:`Word (result_detail model)
   in
@@ -609,7 +609,8 @@ let live_command ~cancel ~reload ~start =
       let runs, reload_error =
         match
           try reload ()
-          with exception_ -> Error (interactive_error "reload-runs" exception_)
+          with exception_ ->
+            Error (interactive_error "reload-runs" exception_)
         with
         | Ok (runs, warnings) ->
             List.iter
@@ -640,11 +641,11 @@ let update_interactive ~reload ~start message model =
               live_status = Running cancel;
               live_progress = None;
               live_phase = Some "starting";
-                  live_run_id = None;
-                  live_settled = 0;
-                  live_last_settled = None;
-                  live_results = [];
-                  live_warnings = [];
+              live_run_id = None;
+              live_settled = 0;
+              live_last_settled = None;
+              live_results = [];
+              live_warnings = [];
               live_error = None;
             }
           in
@@ -653,7 +654,8 @@ let update_interactive ~reload ~start message model =
       match model.live_status with
       | Running cancel ->
           Cancel.request cancel;
-          ( { model with
+          ( {
+              model with
               live_status = Cancelling cancel;
               live_phase = Some "cancelling";
             },
@@ -661,7 +663,8 @@ let update_interactive ~reload ~start message model =
       | Cancelling _ -> (model, Mosaic.Cmd.none)
       | Idle | Finished _ -> (model, Mosaic.Cmd.quit))
   | Move _ | Previous_run | Next_run | Cycle_filter | Resize _ | Live_event _
-  | Live_finished _ -> (update_model message model, Mosaic.Cmd.none)
+  | Live_finished _ ->
+      (update_model message model, Mosaic.Cmd.none)
 
 let write_all file bytes offset length =
   let rec loop offset remaining =
@@ -746,7 +749,9 @@ module For_testing = struct
 end
 
 let terminal_output ~color output =
-  if color then ((fun bytes offset length -> write_all output bytes offset length), fun () -> ())
+  if color then
+    ( (fun bytes offset length -> write_all output bytes offset length),
+      fun () -> () )
   else monochrome_output output
 
 let windows_matrix ~color ~exit_on_ctrl_c =
@@ -763,10 +768,7 @@ let windows_matrix ~color ~exit_on_ctrl_c =
     win32_failure "SetConsoleMode(output)" output_error;
   let output_restored = Atomic.make false in
   let restore_output () =
-    if
-      output_is_tty
-      && Atomic.compare_and_set output_restored false true
-    then
+    if output_is_tty && Atomic.compare_and_set output_restored false true then
       ignore
         (windows_console_restore_output output output_mode output_code_page)
   in
@@ -779,25 +781,28 @@ let windows_matrix ~color ~exit_on_ctrl_c =
     let bytes = Bytes.unsafe_of_string value in
     output_bytes bytes 0 (Bytes.length bytes)
   in
-  let terminal = Matrix.Terminal.make ~output:output_string ~tty:output_is_tty () in
+  let terminal =
+    Matrix.Terminal.make ~output:output_string ~tty:output_is_tty ()
+  in
   let parser = Matrix.Input.Parser.create () in
   let original_mode = ref None in
   let set_raw_mode enabled =
     if enabled then
       match !original_mode with
       | Some _ -> ()
-      | None ->
+      | None -> (
           if input_is_tty then
             let error, mode = windows_console_set_raw input in
             if error <> 0 then win32_failure "SetConsoleMode(input)" error
             else original_mode := Some mode
-    else
-      match !original_mode with
-      | None -> ()
-      | Some mode ->
-          let error = windows_console_restore input mode in
-          if error <> 0 then win32_failure "RestoreConsoleMode(input)" error
-          else original_mode := None
+          else
+            match !original_mode with
+            | None -> ()
+            | Some mode ->
+                let error = windows_console_restore input mode in
+                if error <> 0 then
+                  win32_failure "RestoreConsoleMode(input)" error
+                else original_mode := None)
   in
   let queue = Queue.create () in
   let queue_mutex = Mutex.create () in
@@ -808,7 +813,9 @@ let windows_matrix ~color ~exit_on_ctrl_c =
   in
   let last_size = ref (terminal_size ()) in
   let read_events ~timeout ~on_event =
-    let has_input = Mutex.protect queue_mutex (fun () -> not (Queue.is_empty queue)) in
+    let has_input =
+      Mutex.protect queue_mutex (fun () -> not (Queue.is_empty queue))
+    in
     if not has_input then
       Thread.delay (max 0.001 (min 0.05 (Option.value ~default:0.05 timeout)));
     let chunks =
@@ -838,9 +845,9 @@ let windows_matrix ~color ~exit_on_ctrl_c =
     Matrix.attach ~mode:`Alt ~raw_mode:true ~mouse_enabled:false
       ~bracketed_paste:false ~focus_reporting:true ~kitty_keyboard:`Auto
       ~exit_on_ctrl_c ~cursor_visible:false ~write_output:output_bytes
-      ~now:Unix.gettimeofday ~wake:(fun () -> ())
-      ~terminal_size
-      ~set_raw_mode ~flush_input:clear_input ~read_events
+      ~now:Unix.gettimeofday
+      ~wake:(fun () -> ())
+      ~terminal_size ~set_raw_mode ~flush_input:clear_input ~read_events
       ~query_cursor_position:(fun ~timeout:_ -> None)
       ~cleanup:(fun () ->
         Atomic.set closed true;
@@ -873,22 +880,24 @@ let posix_monochrome_matrix ~exit_on_ctrl_c =
     let bytes = Bytes.unsafe_of_string value in
     output_bytes bytes 0 (Bytes.length bytes)
   in
-  let terminal = Matrix.Terminal.make ~output:output_string ~tty:output_is_tty () in
+  let terminal =
+    Matrix.Terminal.make ~output:output_string ~tty:output_is_tty ()
+  in
   let parser = Matrix.Input.Parser.create () in
   let original_mode = ref None in
   let set_raw_mode enabled =
     if enabled then
       match !original_mode with
       | Some _ -> ()
-      | None ->
+      | None -> (
           if input_is_tty then
             original_mode := Some (Matrix.Terminal.set_raw input)
-    else
-      match !original_mode with
-      | None -> ()
-      | Some mode ->
-          Matrix.Terminal.restore input mode;
-          original_mode := None
+          else
+            match !original_mode with
+            | None -> ()
+            | Some mode ->
+                Matrix.Terminal.restore input mode;
+                original_mode := None)
   in
   let terminal_size () = Matrix.Terminal.size output in
   let last_size = ref (terminal_size ()) in
@@ -906,23 +915,27 @@ let posix_monochrome_matrix ~exit_on_ctrl_c =
       | length ->
           Matrix.Input.Parser.feed parser buffer 0 length
             ~now:(Unix.gettimeofday ()) ~on_event ~on_caps
-      | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EINTR), _, _) -> ();
-    let size = terminal_size () in
-    if size <> !last_size then (
-      last_size := size;
-      let width, height = size in
-      on_event (Matrix.Input.Resize (width, height)));
-    Matrix.Input.Parser.drain parser ~now:(Unix.gettimeofday ()) ~on_event
-      ~on_caps
+      | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EINTR), _, _) ->
+          ();
+          let size = terminal_size () in
+          if size <> !last_size then (
+            last_size := size;
+            let width, height = size in
+            on_event (Matrix.Input.Resize (width, height)));
+          Matrix.Input.Parser.drain parser ~now:(Unix.gettimeofday ()) ~on_event
+            ~on_caps
   in
   let width, height = !last_size in
   let matrix =
     Matrix.attach ~mode:`Alt ~raw_mode:true ~mouse_enabled:false
       ~bracketed_paste:false ~focus_reporting:true ~kitty_keyboard:`Auto
       ~exit_on_ctrl_c ~cursor_visible:false ~write_output:output_bytes
-      ~now:Unix.gettimeofday ~wake:(fun () -> ()) ~terminal_size ~set_raw_mode
+      ~now:Unix.gettimeofday
+      ~wake:(fun () -> ())
+      ~terminal_size ~set_raw_mode
       ~flush_input:(fun () -> Matrix.Terminal.flush_input input)
-      ~read_events ~query_cursor_position:(fun ~timeout:_ -> None)
+      ~read_events
+      ~query_cursor_position:(fun ~timeout:_ -> None)
       ~cleanup:flush_output ~parser ~terminal ~width ~height ()
   in
   Matrix.Terminal.query_pixel_resolution terminal;
@@ -971,10 +984,10 @@ let run_interactive ?initial_error ?(initial_warnings = []) ?(color = true)
   in
   let update message model =
     let model, command = update_interactive ~reload ~start message model in
-    active_cancel :=
-      (match model.live_status with
-      | Running cancel | Cancelling cancel -> Some cancel
-      | Idle | Finished _ -> None);
+    (active_cancel :=
+       match model.live_status with
+       | Running cancel | Cancelling cancel -> Some cancel
+       | Idle | Finished _ -> None);
     (model, command)
   in
   Fun.protect
@@ -996,6 +1009,5 @@ let run_interactive ?initial_error ?(initial_warnings = []) ?(color = true)
         })
     ~finally:(fun () ->
       Option.iter Cancel.request !active_cancel;
-      Mutex.protect workers_mutex (fun () -> !workers)
-      |> List.iter Thread.join;
+      Mutex.protect workers_mutex (fun () -> !workers) |> List.iter Thread.join;
       Matrix.close matrix)
