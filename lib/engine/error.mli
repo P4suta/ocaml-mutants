@@ -29,6 +29,8 @@ type t
 val create :
   phase:phase ->
   cause:cause ->
+  ?code:string ->
+  ?remediation:string ->
   ?context:(string * string) list ->
   ('a, Format.formatter, unit, t) format4 ->
   'a
@@ -45,8 +47,20 @@ val restore :
   suppressed:t list ->
   t
 
+val restore_with_details :
+  phase:phase ->
+  cause:cause ->
+  code:string ->
+  remediation:string ->
+  message:string ->
+  context:(string * string) list ->
+  suppressed:t list ->
+  t
+
 val phase : t -> phase
 val cause : t -> cause
+val code : t -> string
+val remediation : t -> string
 val message : t -> string
 val context : t -> (string * string) list
 val suppressed : t -> t list

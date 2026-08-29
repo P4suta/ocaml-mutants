@@ -127,7 +127,7 @@ let check_list ~cli fixture_project =
   let document_type =
     Yojson.Safe.Util.(json |> member "document_type" |> to_string)
   in
-  if document_type <> "ocaml-mutants.catalog-v1" then
+  if document_type <> "ocaml-mutants.catalog-v2" then
     fail "unexpected list JSON document type: %s" document_type;
   let fixture_name = Filename.basename fixture in
   if fixture_name = "ppx-imprecise" then (
@@ -334,6 +334,7 @@ let check_custom_command ~cli fixture_project =
         "1";
         "--timeout";
         "10";
+        "--json";
         "--";
         "dune";
         "exec";
@@ -344,6 +345,49 @@ let check_custom_command ~cli fixture_project =
     fail "custom-command E2E failed (%s):\n%s%s"
       (Process_supervisor.status_string process.status)
       process.stdout process.stderr;
+  let report =
+    try Yojson.Safe.from_string process.stdout
+    with Yojson.Json_error message ->
+      fail "invalid custom-command report JSON: %s" message
+  in
+  let hit_map =
+    Yojson.Safe.Util.(
+      report |> member "test" |> member "inventory" |> member "hit_map"
+      |> to_list)
+  in
+  if hit_map = [] then fail "custom-command report omitted runtime hit evidence";
+  let mutants = Yojson.Safe.Util.(report |> member "mutants" |> to_list) in
+  let fast_estimates =
+    List.filter
+      (fun result ->
+        Yojson.Safe.Util.(
+          result |> member "evidence" |> member "origin" |> to_string)
+        = "fast-estimated")
+      mutants
+  in
+  if fast_estimates = [] then
+    fail "custom-command fast run omitted no non-covering test evidence";
+  List.iter
+    (fun result ->
+      let open Yojson.Safe.Util in
+      if result |> member "coverage" |> to_string <> "not-covered" then
+        fail "fast-estimated result was not marked not-covered";
+      if result |> member "stages" |> to_list <> [] then
+        fail "fast-estimated result retained an executed stage")
+    fast_estimates;
+  if
+    not
+      (List.exists
+         (fun result ->
+           Yojson.Safe.Util.(
+             result |> member "evidence" |> member "origin" |> to_string)
+           = "execution")
+         mutants)
+  then fail "custom-command fast run lost all executed evidence";
+  if contains_substring ~needle:"privacy-secret" process.stdout then
+    fail "custom-command report retained a configured privacy literal";
+  if not (contains_substring ~needle:"**************" process.stdout) then
+    fail "custom-command report did not retain redaction evidence";
   let after =
     match Util.digest_tree ~skip:Workspace_snapshot.default_skip fixture with
     | Ok value -> value
@@ -433,7 +477,7 @@ let check_match_run ~cli fixture_project =
       [ cli; "run"; "."; "--json"; "--fresh"; "--jobs"; "1" ]
   in
   (match process.status with
-  | Process_supervisor.Exited 1 -> ()
+  | Process_supervisor.Exited 0 -> ()
   | _ ->
       fail "match run E2E returned %s:\n%s%s"
         (Process_supervisor.status_string process.status)

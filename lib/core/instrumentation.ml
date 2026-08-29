@@ -1,6 +1,7 @@
 type error = Interval_forest.error
 
 let pp_error = Interval_forest.pp_error
+let hit_owner_environment = "OCAML_MUTANTS_HIT_OWNER"
 
 let top_level_module_names source =
   let add_name names name =
@@ -29,7 +30,7 @@ let fresh_module_name source =
   in
   choose 0
 
-let instrument ~source mutants =
+let instrument ~hit_owner ~source mutants =
   if mutants = [] then Ok (Source.to_string source)
   else
     match Interval_forest.create ~source mutants with
@@ -49,13 +50,26 @@ let instrument ~source mutants =
             Interval_forest.mutants node
             |> List.map (fun mutant ->
                 Printf.sprintf "| Some %S -> (%s)"
-                  (Mutant.Id.short (Mutant.id mutant))
+                  (Mutant.Id.full (Mutant.id mutant))
                   (Mutant.replacement mutant))
             |> String.concat " "
           in
+          let site_ids =
+            Interval_forest.mutants node
+            |> List.map (fun mutant -> Mutant.Id.full (Mutant.id mutant))
+          in
+          let hit =
+            match site_ids with
+            | [] -> "()"
+            | ids ->
+                ids
+                |> List.map (Printf.sprintf "%s.hit %S" runtime)
+                |> String.concat "; "
+          in
           Printf.sprintf
-            "(match %s.active with | None -> (%s) %s | Some _ -> (%s))" runtime
-            original alternatives original
+            "(let () = %s in match %s.active with | None -> (%s) %s | Some _ \
+             -> (%s))"
+            hit runtime original alternatives original
         and render_slice start_byte end_byte children =
           let buffer = Buffer.create (end_byte - start_byte + 128) in
           let cursor = ref start_byte in
@@ -76,7 +90,41 @@ let instrument ~source mutants =
         Ok
           (Printf.sprintf
              "module %s = struct\n\
-             \  let active = Stdlib.Sys.getenv_opt \"OCAML_MUTANTS_ACTIVE\"\n\
+             \  let process_helper =\n\
+             \    Stdlib.Sys.getenv_opt \"OCAML_MUTANTS_PROCESS_HELPER\" = Some \"1\"\n\
+             \  let active =\n\
+             \    if process_helper then None\n\
+             \    else Stdlib.Sys.getenv_opt \"OCAML_MUTANTS_ACTIVE\"\n\
+             \  let owns_hit_file =\n\
+             \    Stdlib.Sys.getenv_opt %S = Some %S\n\
+             \  let hit_file =\n\
+             \    if process_helper || not owns_hit_file then None\n\
+             \    else Stdlib.Sys.getenv_opt \"OCAML_MUTANTS_HIT_FILE\"\n\
+             \  let hits : (string, unit) Stdlib.Hashtbl.t = \
+              Stdlib.Hashtbl.create 17\n\
+             \  let hit id =\n\
+             \    match hit_file with\n\
+             \    | None -> ()\n\
+             \    | Some _ -> Stdlib.Hashtbl.replace hits id ()\n\
+             \  let flush () =\n\
+             \    match hit_file with\n\
+             \    | None -> ()\n\
+             \    | Some path ->\n\
+             \        (try\n\
+             \           let channel =\n\
+             \             Stdlib.open_out_gen\n\
+             \               [ Stdlib.Open_wronly; Stdlib.Open_creat; \
+              Stdlib.Open_append; Stdlib.Open_binary ]\n\
+             \               0o600 path\n\
+             \           in\n\
+             \           Stdlib.Fun.protect\n\
+             \             ~finally:(fun () -> Stdlib.close_out_noerr channel)\n\
+             \             (fun () ->\n\
+             \               Stdlib.Hashtbl.iter\n\
+             \                 (fun id () -> Stdlib.output_string channel (id \
+              ^ \"\\n\")) hits)\n\
+             \         with _ -> ())\n\
+             \  let () = Stdlib.at_exit flush\n\
               end\n\
               %s"
-             runtime body)
+             runtime hit_owner_environment hit_owner body)

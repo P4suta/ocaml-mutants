@@ -68,6 +68,7 @@ type baseline_stage = {
 
 type warning = { code : string; message : string }
 type skip_summary = { reason : string; count : int; examples : string list }
+type hit_map_entry = { test : string; mutant_ids : string list }
 
 type retry_attempt = {
   outcome : Core.Outcome.t;
@@ -81,6 +82,14 @@ type timeout_retry = {
   initial_timeout : retry_attempt;
   serial_retry : retry_attempt;
 }
+
+type evidence_origin =
+  | Execution
+  | Checkpoint_resume
+  | Checkpoint_estimated
+  | Historical_exact
+  | Historical_estimated
+  | Fast_estimated
 
 type expectation_status =
   | Expectation_fulfilled
@@ -102,6 +111,7 @@ type mutant_result = {
   outcome : Core.Outcome.t;
   duration : Core.Duration.t;
   cached : bool;
+  evidence_origin : evidence_origin;
   stages : stage_result list;
   timeout_confirmed : bool;
   timeout_retry : timeout_retry option;
@@ -121,9 +131,15 @@ type metadata = {
   test_command : Core.Nonempty_argv.t;
   baseline_duration : Core.Duration.t option;
   baseline_stages : baseline_stage list;
+  hit_map : hit_map_entry list;
   timeout : Core.Duration.t option;
   cache_mode : string;
+  execution_mode : string;
+  historical_reuse : string;
   cache_key : string;
+  resolved_config : Yojson.Safe.t;
+  input_fingerprint : string;
+  config_digest : string;
 }
 
 type run_status = Completed | Interrupted | Failed of Error.t
@@ -216,6 +232,7 @@ type topology = {
   scope : Store_path.t;
   runs : Store_path.t;
   outcomes : Store_path.t;
+  journals : Store_path.t;
   latest : Store_path.t;
 }
 
@@ -255,6 +272,17 @@ type reservation = {
   lease : reservation_lease;
   mutex : Mutex.t;
   mutable state : reservation_state;
+}
+
+type journal = {
+  store : t;
+  reservation : reservation;
+  key : string;
+  session_id : Core.Run_id.t;
+  directory : Store_path.t;
+  state_path : Store_path.t;
+  resumed : bool;
+  mutable closed : bool;
 }
 
 type maintenance_lease = {
@@ -318,6 +346,7 @@ let topology scope =
     scope;
     runs = Store_path.child_internal scope "runs";
     outcomes = Store_path.child_internal scope "o";
+    journals = Store_path.child_internal scope "j";
     latest = Store_path.child_internal scope "latest";
   }
 
@@ -1936,6 +1965,7 @@ let mutant_to_json mutant =
     [
       ("id", `String (Core.Mutant.Id.short (Core.Mutant.id mutant)));
       ("full_id", `String (Core.Mutant.Id.full (Core.Mutant.id mutant)));
+      ("lineage_id", `String (Core.Mutant.lineage_id mutant));
       ("path", `String (Core.Mutant.path mutant));
       ("range", range_to_json (Core.Mutant.range mutant));
       ("family", `String (Core.Operator.Family.name (Core.Mutant.family mutant)));
@@ -1973,6 +2003,18 @@ let mutant_of_json json =
   let* () =
     if String.equal encoded_family actual_family then Ok ()
     else Error "operator family contradicts the mutant rule"
+  in
+  let* () =
+    match json with
+    | `Assoc fields -> (
+        match List.assoc_opt "lineage_id" fields with
+        | None -> Ok ()
+        | Some (`String encoded)
+          when String.equal encoded (Core.Mutant.lineage_id mutant) ->
+            Ok ()
+        | Some (`String _) -> Error "lineage ID contradicts mutant structure"
+        | Some _ -> Error "lineage ID must be a string")
+    | _ -> Error "mutant must be an object"
   in
   Ok mutant
 
@@ -2145,7 +2187,73 @@ let expectation_evaluation_of_json json =
       status;
     }
 
-let result_to_json result =
+type evidence_level = Executed | Exact_cache | Estimated
+
+let result_evidence_level result =
+  match result.evidence_origin with
+  | Execution -> Executed
+  | Checkpoint_resume | Historical_exact -> Exact_cache
+  | Checkpoint_estimated | Historical_estimated | Fast_estimated -> Estimated
+
+let evidence_origin_name = function
+  | Execution -> "execution"
+  | Checkpoint_resume -> "checkpoint-resume"
+  | Checkpoint_estimated -> "checkpoint-estimated"
+  | Historical_exact -> "historical-exact"
+  | Historical_estimated -> "historical-estimated"
+  | Fast_estimated -> "fast-estimated"
+
+let evidence_origin_is_cached = function
+  | Checkpoint_resume | Checkpoint_estimated | Historical_exact
+  | Historical_estimated ->
+      true
+  | Execution | Fast_estimated -> false
+
+let evidence_origin_is_estimated = function
+  | Checkpoint_estimated | Historical_estimated | Fast_estimated -> true
+  | Execution | Checkpoint_resume | Historical_exact -> false
+
+let evidence_origin_is_resumed = function
+  | Checkpoint_resume | Checkpoint_estimated -> true
+  | Execution | Historical_exact | Historical_estimated | Fast_estimated ->
+      false
+
+let evidence_level_name = function
+  | Executed -> "executed"
+  | Exact_cache -> "exact-cache"
+  | Estimated -> "estimated"
+
+let result_attempts result =
+  match result.timeout_retry with
+  | Some retry -> [ retry.initial_timeout; retry.serial_retry ]
+  | None ->
+      [
+        {
+          outcome = result.outcome;
+          duration = result.duration;
+          stages = result.stages;
+          stdout = result.stdout;
+          stderr = result.stderr;
+        };
+      ]
+
+let killing_stage result =
+  if result.outcome <> Core.Outcome.Killed then None
+  else
+    match List.rev result.stages with
+    | [] -> None
+    | stage :: _ -> Some stage.name
+
+let result_to_json ?coverage result =
+  let coverage =
+    Option.value coverage
+      ~default:
+        (match result.outcome with
+        | Core.Outcome.Killed -> "covered"
+        | Core.Outcome.Survived | Core.Outcome.Timeout
+        | Core.Outcome.Inconclusive _ | Core.Outcome.Error _ ->
+            "unknown")
+  in
   `Assoc
     [
       ("mutant", mutant_to_json result.mutant);
@@ -2153,6 +2261,29 @@ let result_to_json result =
       ("error", outcome_detail result.outcome);
       ("duration_seconds", `Float (Core.Duration.to_seconds result.duration));
       ("cached", `Bool result.cached);
+      ( "evidence",
+        `Assoc
+          [
+            ( "level",
+              `String (evidence_level_name (result_evidence_level result)) );
+            ("origin", `String (evidence_origin_name result.evidence_origin));
+            ( "estimated",
+              `Bool (evidence_origin_is_estimated result.evidence_origin) );
+          ] );
+      ( "attempts",
+        `List (List.map retry_attempt_to_json (result_attempts result)) );
+      ( "killing_test",
+        match killing_stage result with
+        | None -> `Null
+        | Some name -> `String name );
+      ("coverage", `String coverage);
+      ( "checkpoint",
+        `Assoc
+          [
+            ("settled", `Bool true);
+            ( "resumed",
+              `Bool (evidence_origin_is_resumed result.evidence_origin) );
+          ] );
       ("stages", `List (List.map stage_result_to_json result.stages));
       ("timeout_confirmed", `Bool result.timeout_confirmed);
       ( "timeout_retry",
@@ -2263,12 +2394,37 @@ let result_of_json json =
   in
   let* stdout = captured_of_json (member "stdout" json) in
   let* stderr = captured_of_json (member "stderr" json) in
+  let cached = json |> member "cached" |> to_bool in
+  let evidence_json = member "evidence" json in
+  let* evidence_origin =
+    match evidence_json with
+    | `Null -> Ok (if cached then Historical_exact else Execution)
+    | evidence -> (
+        match evidence |> member "origin" |> to_string with
+        | "execution" -> Ok Execution
+        | "checkpoint-resume" -> Ok Checkpoint_resume
+        | "checkpoint-estimated" -> Ok Checkpoint_estimated
+        | "historical-exact" | "historical-cache" -> Ok Historical_exact
+        | "historical-estimated" -> Ok Historical_estimated
+        | "fast-estimated" -> Ok Fast_estimated
+        | value -> Error ("unknown evidence origin: " ^ value))
+  in
+  let* () =
+    if cached = evidence_origin_is_cached evidence_origin then Ok ()
+    else Error "cached flag contradicts evidence origin"
+  in
+  let* () =
+    if evidence_origin = Fast_estimated && outcome = Core.Outcome.Killed then
+      Error "an observed fast-mode kill must retain executed evidence"
+    else Ok ()
+  in
   let result =
     {
       mutant;
       outcome;
       duration;
-      cached = json |> member "cached" |> to_bool;
+      cached;
+      evidence_origin;
       stages;
       timeout_confirmed;
       timeout_retry;
@@ -2276,6 +2432,34 @@ let result_of_json json =
       stdout;
       stderr;
     }
+  in
+  let* () =
+    match evidence_json with
+    | `Null -> Ok ()
+    | evidence ->
+        let encoded_level = evidence |> member "level" |> to_string in
+        let encoded_estimated = evidence |> member "estimated" |> to_bool in
+        let expected_level =
+          evidence_level_name (result_evidence_level result)
+        in
+        let expected_estimated = evidence_origin_is_estimated evidence_origin in
+        if not (String.equal encoded_level expected_level) then
+          Error "evidence level contradicts evidence origin"
+        else if encoded_estimated <> expected_estimated then
+          Error "estimated marker contradicts evidence origin"
+        else Ok ()
+  in
+  let* () =
+    match member "checkpoint" json with
+    | `Null -> Ok ()
+    | checkpoint ->
+        if not (checkpoint |> member "settled" |> to_bool) then
+          Error "settled result has an unset checkpoint marker"
+        else if
+          checkpoint |> member "resumed" |> to_bool
+          <> evidence_origin_is_resumed evidence_origin
+        then Error "checkpoint resume marker contradicts evidence origin"
+        else Ok ()
   in
   let encoded_expected_survivor =
     json |> member "expected_survivor" |> to_bool
@@ -2316,6 +2500,19 @@ type summary = {
   detected : int;
   score : float option;
 }
+
+let run_evidence_level (run : run) =
+  if
+    List.exists
+      (fun result -> result_evidence_level result = Estimated)
+      run.results
+  then Estimated
+  else if
+    List.exists
+      (fun result -> result_evidence_level result = Exact_cache)
+      run.results
+  then Exact_cache
+  else Executed
 
 let summary (run : run) =
   let not_run = not_run run in
@@ -2434,7 +2631,9 @@ let failure_to_json error =
       [
         ("phase", `String (Error.phase_name (Error.phase error)));
         ("cause", `String (Error.cause_name (Error.cause error)));
+        ("code", `String (Error.code error));
         ("message", `String (Error.message error));
+        ("remediation", `String (Error.remediation error));
         ( "context",
           `Assoc
             (List.map
@@ -2449,6 +2648,21 @@ let status_name = function
   | Completed -> "completed"
   | Interrupted -> "interrupted"
   | Failed _ -> "failed"
+
+let result_coverage_from_hit_map hit_map (result : mutant_result) =
+  if result.outcome = Core.Outcome.Killed then "covered"
+  else
+    let id = Core.Mutant.Id.full (Core.Mutant.id result.mutant) in
+    if
+      List.exists
+        (fun (entry : hit_map_entry) -> List.mem id entry.mutant_ids)
+        hit_map
+    then "covered"
+    else if hit_map <> [] then "not-covered"
+    else "unknown"
+
+let result_coverage (run : run) result =
+  result_coverage_from_hit_map run.metadata.hit_map result
 
 let run_to_yojson (run : run) =
   let not_run = not_run run in
@@ -2474,10 +2688,33 @@ let run_to_yojson (run : run) =
           `Float (Core.Duration.to_seconds stage.slowest) );
       ]
   in
+  let evidence_counts =
+    List.fold_left
+      (fun (executed, exact_cache, estimated) result ->
+        match result_evidence_level result with
+        | Executed -> (executed + 1, exact_cache, estimated)
+        | Exact_cache -> (executed, exact_cache + 1, estimated)
+        | Estimated -> (executed, exact_cache, estimated + 1))
+      (0, 0, 0) run.results
+  in
+  let executed_evidence, exact_cache_evidence, estimated_evidence =
+    evidence_counts
+  in
+  let resumed_evidence =
+    List.fold_left
+      (fun count result ->
+        if evidence_origin_is_resumed result.evidence_origin then count + 1
+        else count)
+      0 run.results
+  in
+  let stages_json =
+    `List (List.map baseline_stage_to_json run.metadata.baseline_stages)
+  in
+  let resolved_config = run.metadata.resolved_config in
   `Assoc
     [
-      ("document_type", `String "ocaml-mutants.run-report-v1");
-      ("schema_version", `Int 1);
+      ("document_type", `String "ocaml-mutants.run-report-v2");
+      ("schema_version", `Int 2);
       ("run_id", `String (Core.Run_id.to_string run.metadata.id));
       ("status", `String (status_name run.status));
       ("started_at", `String run.metadata.started_at);
@@ -2487,6 +2724,15 @@ let run_to_yojson (run : run) =
           [
             ("digest", `String run.metadata.workspace_digest);
             ("toolchain", `String run.metadata.toolchain);
+          ] );
+      ("resolved_config", resolved_config);
+      ( "input_fingerprint",
+        `Assoc
+          [
+            ("digest", `String run.metadata.input_fingerprint);
+            ("workspace_digest", `String run.metadata.workspace_digest);
+            ("toolchain", `String run.metadata.toolchain);
+            ("config_digest", `String run.metadata.config_digest);
           ] );
       ("profile", `String (Core.Operator.Profile.name run.metadata.profile));
       ("selection", `Assoc [ ("description", `String run.metadata.selection) ]);
@@ -2501,10 +2747,34 @@ let run_to_yojson (run : run) =
             ( "baseline_duration_seconds",
               duration_option_to_json run.metadata.baseline_duration );
             ("timeout_seconds", duration_option_to_json run.metadata.timeout);
-            ( "stages",
-              `List
-                (List.map baseline_stage_to_json run.metadata.baseline_stages)
-            );
+            ("stages", stages_json);
+            ( "inventory",
+              `Assoc
+                [
+                  ( "state",
+                    `String
+                      (if run.metadata.baseline_stages = [] then "unavailable"
+                       else "stage-level") );
+                  ( "tests",
+                    `List
+                      (List.map
+                         (fun stage -> `String stage.name)
+                         run.metadata.baseline_stages) );
+                  ( "hit_map",
+                    `List
+                      (List.map
+                         (fun entry ->
+                           `Assoc
+                             [
+                               ("test", `String entry.test);
+                               ( "mutant_ids",
+                                 `List
+                                   (List.map
+                                      (fun id -> `String id)
+                                      entry.mutant_ids) );
+                             ])
+                         run.metadata.hit_map) );
+                ] );
           ] );
       ( "cache",
         `Assoc
@@ -2513,7 +2783,23 @@ let run_to_yojson (run : run) =
             ("key", `String run.metadata.cache_key);
           ] );
       ("summary", summary_json run);
-      ("mutants", `List (List.map result_to_json run.results));
+      ( "evidence",
+        `Assoc
+          [
+            ("level", `String (evidence_level_name (run_evidence_level run)));
+            ("complete", `Bool (run.completeness = Complete));
+            ("executed", `Int executed_evidence);
+            ("exact_cache", `Int exact_cache_evidence);
+            ("estimated", `Int estimated_evidence);
+            ("checkpointed", `Int (List.length run.results));
+            ("resumed", `Int resumed_evidence);
+          ] );
+      ( "mutants",
+        `List
+          (List.map
+             (fun result ->
+               result_to_json ~coverage:(result_coverage run result) result)
+             run.results) );
       ("not_run", `List (List.map mutant_to_json not_run));
       ( "expectations",
         `List (List.map expectation_evaluation_to_json run.expectations) );
@@ -2566,10 +2852,16 @@ let rec failure_of_json json =
   let* suppressed =
     decode_suppressed [] (json |> member "suppressed" |> to_list)
   in
-  Ok
-    (Error.restore ~phase ~cause
-       ~message:(json |> member "message" |> to_string)
-       ~context ~suppressed)
+  let optional_string name =
+    match json |> member name with `String value -> Some value | _ -> None
+  in
+  let message = json |> member "message" |> to_string in
+  match (optional_string "code", optional_string "remediation") with
+  | Some code, Some remediation ->
+      Ok
+        (Error.restore_with_details ~phase ~cause ~code ~remediation ~message
+           ~context ~suppressed)
+  | _ -> Ok (Error.restore ~phase ~cause ~message ~context ~suppressed)
 
 let decode_status json =
   let open Yojson.Safe.Util in
@@ -2721,6 +3013,28 @@ let validate_expectations ~executed ~pending expectations =
       | Some _, Some _ -> Ok ())
     executed (Ok ())
 
+let validate_hit_map ~executed ~pending ~baseline_stages hit_map =
+  let stage_names =
+    List.map (fun (stage : baseline_stage) -> stage.name) baseline_stages
+  in
+  List.fold_left
+    (fun validation (entry : hit_map_entry) ->
+      let* () = validation in
+      if not (List.mem entry.test stage_names) then
+        Error
+          (Printf.sprintf "hit-map test %S is not a recorded stage" entry.test)
+      else
+        List.fold_left
+          (fun validation id ->
+            let* () = validation in
+            if Hashtbl.mem executed id || Hashtbl.mem pending id then Ok ()
+            else
+              Error
+                (Printf.sprintf
+                   "hit-map mutant ID %s is absent from the report catalog" id))
+          (Ok ()) entry.mutant_ids)
+    (Ok ()) hit_map
+
 let decode_completeness summary_json not_run =
   let open Yojson.Safe.Util in
   match summary_json |> member "kind" |> to_string with
@@ -2761,10 +3075,14 @@ let validate_summary encoded run =
 let run_of_json json =
   try
     let open Yojson.Safe.Util in
+    let document_type = json |> member "document_type" |> to_string in
+    let schema_version = json |> member "schema_version" |> to_int in
     if
-      json |> member "document_type" |> to_string
-      <> "ocaml-mutants.run-report-v1"
-      || json |> member "schema_version" |> to_int <> 1
+      not
+        (String.equal document_type "ocaml-mutants.run-report-v1"
+         && schema_version = 1
+        || String.equal document_type "ocaml-mutants.run-report-v2"
+           && schema_version = 2)
     then Error "unsupported run report document"
     else
       let* id = Core.Run_id.of_string (json |> member "run_id" |> to_string) in
@@ -2824,6 +3142,44 @@ let run_of_json json =
         decode [] (json |> member "test" |> member "stages" |> to_list)
       in
       let* () = validate_baseline baseline_duration baseline_stages in
+      let* hit_map =
+        if schema_version = 1 then Ok []
+        else
+          let decode_entry value =
+            let test = value |> member "test" |> to_string in
+            let mutant_ids =
+              value |> member "mutant_ids" |> to_list |> List.map to_string
+            in
+            if String.trim test = "" then Error "hit-map test name is empty"
+            else if
+              List.exists
+                (fun id ->
+                  String.length id <> 64
+                  || not
+                       (String.for_all
+                          (function
+                            | '0' .. '9' | 'a' .. 'f' -> true | _ -> false)
+                          id))
+                mutant_ids
+            then Error "hit map contains an invalid full mutant ID"
+            else if
+              List.length mutant_ids
+              <> List.length (List.sort_uniq String.compare mutant_ids)
+            then Error "hit map contains duplicate mutant IDs"
+            else Ok { test; mutant_ids }
+          in
+          let rec decode seen decoded = function
+            | [] -> Ok (List.rev decoded)
+            | value :: rest ->
+                let* entry = decode_entry value in
+                if List.mem entry.test seen then
+                  Error "hit map contains duplicate test names"
+                else decode (entry.test :: seen) (entry :: decoded) rest
+          in
+          decode [] []
+            (json |> member "test" |> member "inventory" |> member "hit_map"
+           |> to_list)
+      in
       let* status = decode_status json in
       let decode_list decoder values =
         List.fold_left
@@ -2849,6 +3205,7 @@ let run_of_json json =
       let* completeness = decode_completeness encoded_summary not_run in
       let* executed, pending = validate_mutant_sets results not_run in
       let* () = validate_expectations ~executed ~pending expectations in
+      let* () = validate_hit_map ~executed ~pending ~baseline_stages hit_map in
       let workspace = member "workspace" json in
       let cache = member "cache" json in
       let selection = member "selection" json in
@@ -2865,6 +3222,87 @@ let run_of_json json =
                 value |> member "examples" |> to_list |> List.map to_string;
             })
       in
+      let execution_mode, historical_reuse =
+        if schema_version = 1 then
+          ( "strict",
+            match cache |> member "mode" |> to_string with
+            | "on" -> "exact"
+            | _ -> "off" )
+        else
+          ( json |> member "resolved_config" |> member "execution"
+            |> member "mode" |> to_string,
+            json |> member "resolved_config" |> member "cache"
+            |> member "historical_reuse" |> to_string )
+      in
+      let resolved_config, input_fingerprint, config_digest =
+        if schema_version = 1 then
+          let reconstructed =
+            let cache_mode =
+              match cache |> member "mode" |> to_string with
+              | "on" -> Config.On
+              | "auto" -> Config.Auto
+              | _ -> Config.Off
+            in
+            let stages =
+              match baseline_stages with
+              | [] -> [ { Config.name = "full"; command } ]
+              | stages ->
+                  List.map
+                    (fun (stage : baseline_stage) ->
+                      { Config.name = stage.name; command = stage.command })
+                    stages
+            in
+            let historical_reuse =
+              if cache_mode = Config.On then Config.Reuse_exact
+              else Config.Reuse_off
+            in
+            {
+              Config.defaults with
+              mutation = { Config.defaults.mutation with profile };
+              test = { Config.defaults.test with command; stages; timeout };
+              execution =
+                { Config.defaults.execution with mode = Config.Strict };
+              cache =
+                {
+                  Config.defaults.cache with
+                  mode = cache_mode;
+                  historical_reuse;
+                };
+            }
+            |> Config.to_yojson
+          in
+          let digest = cache |> member "key" |> to_string in
+          ( reconstructed,
+            digest,
+            sha256 (Yojson.Safe.to_string ~std:true reconstructed) )
+        else
+          let resolved = json |> member "resolved_config" in
+          let fingerprint = json |> member "input_fingerprint" in
+          ( resolved,
+            fingerprint |> member "digest" |> to_string,
+            fingerprint |> member "config_digest" |> to_string )
+      in
+      let* () =
+        if schema_version = 1 then Ok ()
+        else
+          let redactions =
+            resolved_config |> member "privacy" |> member "redactions"
+            |> to_list |> List.map to_string
+          in
+          if
+            List.for_all
+              (String.equal Config.report_redaction_placeholder)
+              redactions
+          then Ok ()
+          else Error "resolved_config exposes a privacy redaction literal"
+      in
+      let expected_config_digest =
+        sha256 (Yojson.Safe.to_string ~std:true resolved_config)
+      in
+      let* () =
+        if String.equal config_digest expected_config_digest then Ok ()
+        else Error "input_fingerprint.config_digest contradicts resolved_config"
+      in
       let run =
         {
           metadata =
@@ -2879,9 +3317,15 @@ let run_of_json json =
               test_command = command;
               baseline_duration;
               baseline_stages;
+              hit_map;
               timeout;
               cache_mode = cache |> member "mode" |> to_string;
+              execution_mode;
+              historical_reuse;
               cache_key = cache |> member "key" |> to_string;
+              resolved_config;
+              input_fingerprint;
+              config_digest;
             };
           status;
           results;
@@ -2897,6 +3341,25 @@ let run_of_json json =
                 });
         }
       in
+      let* () =
+        if schema_version = 1 then Ok ()
+        else
+          let encoded_results = json |> member "mutants" |> to_list in
+          let rec validate_coverage encoded decoded =
+            match (encoded, decoded) with
+            | [], [] -> Ok ()
+            | value :: encoded, result :: decoded ->
+                let actual = value |> member "coverage" |> to_string in
+                let expected = result_coverage run result in
+                if String.equal actual expected then
+                  validate_coverage encoded decoded
+                else
+                  Error
+                    "mutant coverage contradicts the recorded runtime hit map"
+            | _ -> Error "mutant coverage list length is inconsistent"
+          in
+          validate_coverage encoded_results run.results
+      in
       let* () = validate_summary encoded_summary run in
       Ok run
   with
@@ -2909,10 +3372,12 @@ let outcome_path (store : t) ~key ~id =
   Ok (store_path store outcome)
 
 let cacheable_result result =
-  match result.outcome with
-  | Core.Outcome.Timeout -> result.timeout_confirmed
-  | Core.Outcome.Killed | Core.Outcome.Survived -> true
-  | Core.Outcome.Inconclusive _ | Core.Outcome.Error _ -> false
+  if result_evidence_level result = Estimated then false
+  else
+    match result.outcome with
+    | Core.Outcome.Timeout -> result.timeout_confirmed
+    | Core.Outcome.Killed | Core.Outcome.Survived -> true
+    | Core.Outcome.Inconclusive _ | Core.Outcome.Error _ -> false
 
 let load_mutant (store : t) ~key ~source ~expected =
   let id = Core.Mutant.Id.short (Core.Mutant.id expected) in
@@ -2935,7 +3400,12 @@ let load_mutant (store : t) ~key ~source ~expected =
                       (Core.Source.digest source)
                       (Core.Mutant.source_digest result.mutant)
                  && cacheable_result result ->
-              Some { result with cached = true }
+              Some
+                {
+                  result with
+                  cached = true;
+                  evidence_origin = Historical_exact;
+                }
           | _ -> None
       with _ -> None)
 
@@ -2948,7 +3418,9 @@ let save_mutant (store : t) ~key result =
         [
           ("document_type", `String "ocaml-mutants.cache-outcome-v3");
           ("cache_abi", `Int 3);
-          ("result", result_to_json { result with cached = false });
+          ( "result",
+            result_to_json
+              { result with cached = false; evidence_origin = Execution } );
         ]
       |> Yojson.Safe.to_string
     in
@@ -3206,6 +3678,372 @@ let verify_active_marker (store : t) (reservation : reservation) =
             (Error.create ~phase:Error.Reporting
                ~cause:Error.Invariant_violation
                "run reservation no longer owns a live marker capability"))
+
+let journal_error ~path message =
+  Error.create ~phase:Error.Cache ~cause:Error.Corrupt_cache
+    ~context:[ ("path", path) ]
+    "run journal %s" message
+
+let journal_path_error message =
+  Error.create ~phase:Error.Cache ~cause:Error.Invalid_input
+    "cannot address run journal: %s" message
+
+let journal_body ~key ~session_id ~status =
+  `Assoc
+    [
+      ("fingerprint", `String key);
+      ("session_run_id", `String (Core.Run_id.to_string session_id));
+      ("status", `String status);
+    ]
+
+let checked_document ~document_type body =
+  let encoded_body = Yojson.Safe.to_string body in
+  `Assoc
+    [
+      ("document_type", `String document_type);
+      ("schema_version", `Int 1);
+      ("body", body);
+      ("checksum_sha256", `String (sha256 encoded_body));
+    ]
+
+let journal_state_string ~key ~session_id ~status =
+  checked_document ~document_type:"ocaml-mutants.run-journal-state-v1"
+    (journal_body ~key ~session_id ~status)
+  |> Yojson.Safe.to_string
+
+let decode_checked_document ~document_type contents =
+  try
+    let open Yojson.Safe.Util in
+    let document = Yojson.Safe.from_string contents in
+    if document |> member "document_type" |> to_string <> document_type then
+      Error "has an unsupported document type"
+    else if document |> member "schema_version" |> to_int <> 1 then
+      Error "has an unsupported schema version"
+    else
+      let body = member "body" document in
+      let checksum = document |> member "checksum_sha256" |> to_string in
+      if String.equal checksum (sha256 (Yojson.Safe.to_string body)) then
+        Ok body
+      else Error "checksum does not match its canonical body"
+  with
+  | Yojson.Json_error message
+  | Yojson.Safe.Util.Type_error (message, _)
+  | Invalid_argument message
+  ->
+    Error message
+
+let decode_journal_state ~key contents =
+  let open Yojson.Safe.Util in
+  let* body =
+    decode_checked_document ~document_type:"ocaml-mutants.run-journal-state-v1"
+      contents
+  in
+  try
+    if body |> member "fingerprint" |> to_string <> key then
+      Error "fingerprint does not match its directory"
+    else
+      let* session_id =
+        Core.Run_id.of_string (body |> member "session_run_id" |> to_string)
+      in
+      match body |> member "status" |> to_string with
+      | "open" -> Ok (session_id, `Open)
+      | "complete" -> Ok (session_id, `Complete)
+      | _ -> Error "state is neither open nor complete"
+  with Yojson.Safe.Util.Type_error (message, _) | Invalid_argument message ->
+    Error message
+
+let journal_retry_failure (store : t) (reservation : reservation) ~path failure
+    =
+  reservation_native_failure store reservation.lease
+    (cache_failure_error ~path failure)
+    (retry_resources_of_failure failure)
+
+let journal_advisory_failure (store : t) (reservation : reservation) ~path
+    advisories =
+  match cache_advisory_errors ~path advisories with
+  | [] -> Ok ()
+  | primary :: suppressed ->
+      reservation_native_failure store reservation.lease
+        (suppress_all primary suppressed)
+        (retry_resources_of_advisories advisories)
+
+let ensure_journal_directory (store : t) (reservation : reservation) path =
+  let display_path = store_path store path in
+  match Publication_cache.mkdirs reservation.lease.shared.native.root path with
+  | Publication_cache.Directories_ready { advisories; _ } ->
+      journal_advisory_failure store reservation ~path:display_path advisories
+  | Directories_incomplete { created; failure } ->
+      reservation_native_failure store reservation.lease
+        (add_directory_observation_context
+           (cache_failure_error ~path:display_path failure)
+           created)
+        (retry_resources_of_failure failure)
+
+let read_journal_file (store : t) (reservation : reservation) path ~limit =
+  let display_path = store_path store path in
+  match
+    Publication_cache.read_regular reservation.lease.shared.native.root path
+      ~limit
+  with
+  | Ok Cache_fs.Read_missing -> Ok None
+  | Ok (Cache_fs.Contents read) -> Ok (Some read.contents)
+  | Error failure ->
+      journal_retry_failure store reservation ~path:display_path failure
+
+let replace_journal_file (store : t) (reservation : reservation) path contents =
+  let display_path = store_path store path in
+  match
+    Publication_cache.replace_file reservation.lease.shared.native.root path
+      ~contents
+  with
+  | Publication_cache.Replaced { advisories } ->
+      journal_advisory_failure store reservation ~path:display_path advisories
+  | Replacement_not_published { live_stage; audit_only; failure } ->
+      let primary =
+        add_residual_context
+          (cache_failure_error ~path:display_path failure)
+          audit_only
+      in
+      reservation_native_failure store reservation.lease primary
+        (Option.to_list
+           (Option.map (fun stage -> Cleanup_stage stage) live_stage)
+        @ retry_resources_of_failure failure)
+
+let create_journal_file (store : t) (reservation : reservation) path contents =
+  let display_path = store_path store path in
+  match
+    Publication_cache.create_exclusive reservation.lease.shared.native.root path
+      ~contents
+  with
+  | Publication_cache.File_created { advisories } ->
+      let* () =
+        journal_advisory_failure store reservation ~path:display_path advisories
+      in
+      Ok `Created
+  | File_exists { advisories } ->
+      let* () =
+        journal_advisory_failure store reservation ~path:display_path advisories
+      in
+      Ok `Exists
+  | File_not_created failure ->
+      journal_retry_failure store reservation ~path:display_path failure
+  | File_creation_incomplete { live_file; audit_only; failure } ->
+      let primary =
+        add_residual_context
+          (cache_failure_error ~path:display_path failure)
+          audit_only
+      in
+      reservation_native_failure store reservation.lease primary
+        (Option.to_list
+           (Option.map (fun stage -> Cleanup_stage stage) live_file)
+        @ retry_resources_of_failure failure)
+
+let journal_paths store key session_id =
+  let* key_directory = Store_path.child store.topology.journals key in
+  let* state_path = Store_path.child key_directory "state.json" in
+  let* directory =
+    Store_path.child key_directory (Core.Run_id.to_string session_id)
+  in
+  Ok (key_directory, state_path, directory)
+
+let open_journal store reservation ~key ~fresh =
+  with_reservation_lock reservation (fun () ->
+      let* () = verify_active_marker store reservation in
+      let* key_directory, state_path, current_directory =
+        journal_paths store key reservation.id
+        |> Result.map_error journal_path_error
+      in
+      let* () = ensure_journal_directory store reservation key_directory in
+      let* state =
+        read_journal_file store reservation state_path ~limit:65536L
+      in
+      let* prior =
+        match state with
+        | None -> Ok None
+        | Some contents -> (
+            match decode_journal_state ~key contents with
+            | Ok state -> Ok (Some state)
+            | Error message ->
+                Error
+                  (journal_error ~path:(store_path store state_path) message))
+      in
+      let session_id, resumed =
+        match (fresh, prior) with
+        | false, Some (session_id, `Open) -> (session_id, true)
+        | _ -> (reservation.id, false)
+      in
+      let* _, _, directory =
+        if Core.Run_id.compare session_id reservation.id = 0 then
+          Ok (key_directory, state_path, current_directory)
+        else
+          journal_paths store key session_id
+          |> Result.map_error journal_path_error
+      in
+      let* () = ensure_journal_directory store reservation directory in
+      let* () =
+        if resumed then Ok ()
+        else
+          replace_journal_file store reservation state_path
+            (journal_state_string ~key ~session_id ~status:"open")
+      in
+      Ok
+        {
+          store;
+          reservation;
+          key;
+          session_id;
+          directory;
+          state_path;
+          resumed;
+          closed = false;
+        })
+
+let journal_resumed (journal : journal) = journal.resumed
+
+let checkpoint_path (journal : journal) mutant =
+  Store_path.child journal.directory
+    (Core.Mutant.Id.full (Core.Mutant.id mutant) ^ ".json")
+
+let checkpointable_result result =
+  result.outcome <> Core.Outcome.Timeout || result.timeout_confirmed
+
+let checkpoint_string (journal : journal) result =
+  let mutant_id = Core.Mutant.Id.full (Core.Mutant.id result.mutant) in
+  let body =
+    `Assoc
+      [
+        ("fingerprint", `String journal.key);
+        ("session_run_id", `String (Core.Run_id.to_string journal.session_id));
+        ("mutant_id", `String mutant_id);
+        ("result", result_to_json result);
+      ]
+  in
+  checked_document ~document_type:"ocaml-mutants.run-checkpoint-v1" body
+  |> Yojson.Safe.to_string
+
+let decode_checkpoint (journal : journal) ~source ~expected contents =
+  let open Yojson.Safe.Util in
+  try
+    match
+      decode_checked_document ~document_type:"ocaml-mutants.run-checkpoint-v1"
+        contents
+    with
+    | Error _ -> Ok None
+    | Ok body -> (
+        let expected_id = Core.Mutant.Id.full (Core.Mutant.id expected) in
+        if body |> member "fingerprint" |> to_string <> journal.key then Ok None
+        else if
+          body |> member "session_run_id" |> to_string
+          <> Core.Run_id.to_string journal.session_id
+        then Ok None
+        else if body |> member "mutant_id" |> to_string <> expected_id then
+          Ok None
+        else
+          match result_of_json (member "result" body) with
+          | Ok result
+            when Core.Mutant.equal_identity result.mutant expected
+                 && String.equal
+                      (Core.Source.digest source)
+                      (Core.Mutant.source_digest result.mutant)
+                 && checkpointable_result result ->
+              let evidence_origin =
+                if result_evidence_level result = Estimated then
+                  Checkpoint_estimated
+                else Checkpoint_resume
+              in
+              Ok (Some { result with cached = true; evidence_origin })
+          | Ok _ | Error _ -> Ok None)
+  with Yojson.Safe.Util.Type_error _ | Invalid_argument _ -> Ok None
+
+let load_checkpoint (journal : journal) ~source ~expected =
+  with_reservation_lock journal.reservation (fun () ->
+      if journal.closed then Ok None
+      else
+        let* () = verify_active_marker journal.store journal.reservation in
+        match checkpoint_path journal expected with
+        | Error _ -> Ok None
+        | Ok path -> (
+            let* contents =
+              read_journal_file journal.store journal.reservation path
+                ~limit:33554432L
+            in
+            match contents with
+            | None -> Ok None
+            | Some contents ->
+                decode_checkpoint journal ~source ~expected contents))
+
+let checkpoint_mutant (journal : journal) result =
+  if not (checkpointable_result result) then Ok ()
+  else
+    with_reservation_lock journal.reservation (fun () ->
+        let* () = verify_active_marker journal.store journal.reservation in
+        if journal.closed then
+          Error
+            (Error.create ~phase:Error.Cache ~cause:Error.Invariant_violation
+               "cannot checkpoint into a completed run journal")
+        else
+          let* path =
+            checkpoint_path journal result.mutant
+            |> Result.map_error journal_path_error
+          in
+          let contents = checkpoint_string journal result in
+          let* disposition =
+            create_journal_file journal.store journal.reservation path contents
+          in
+          match disposition with
+          | `Created -> Ok ()
+          | `Exists ->
+              let* existing =
+                read_journal_file journal.store journal.reservation path
+                  ~limit:33554432L
+              in
+              if existing = Some contents then Ok ()
+              else
+                Error
+                  (journal_error
+                     ~path:(store_path journal.store path)
+                     "checkpoint conflicts with an existing immutable record"))
+
+let complete_journal (journal : journal) =
+  with_reservation_lock journal.reservation (fun () ->
+      let* () = verify_active_marker journal.store journal.reservation in
+      if journal.closed then Ok ()
+      else
+        let* current =
+          read_journal_file journal.store journal.reservation journal.state_path
+            ~limit:65536L
+        in
+        let* () =
+          match current with
+          | None ->
+              Error
+                (journal_error
+                   ~path:(store_path journal.store journal.state_path)
+                   "state disappeared before completion")
+          | Some contents -> (
+              match decode_journal_state ~key:journal.key contents with
+              | Ok (session_id, `Open)
+                when Core.Run_id.compare session_id journal.session_id = 0 ->
+                  Ok ()
+              | Ok _ ->
+                  Error
+                    (journal_error
+                       ~path:(store_path journal.store journal.state_path)
+                       "state no longer names this open session")
+              | Error message ->
+                  Error
+                    (journal_error
+                       ~path:(store_path journal.store journal.state_path)
+                       message))
+        in
+        let* () =
+          replace_journal_file journal.store journal.reservation
+            journal.state_path
+            (journal_state_string ~key:journal.key
+               ~session_id:journal.session_id ~status:"complete")
+        in
+        journal.closed <- true;
+        Ok ())
 
 let cleanup_marker store reservation =
   match verify_active_marker store reservation with
@@ -3502,12 +4340,56 @@ let load_run (store : t) id =
                      ~cause:Error.Decode_failure "invalid stored run: %s"
                      message))))
 
+let stored_run_ids (store : t) =
+  let directory = store_path store store.topology.runs in
+  if not (Sys.file_exists (windows_extended_path directory)) then []
+  else
+    files_recursive directory
+    |> List.filter_map (fun relative ->
+        if
+          String.contains relative '/'
+          || String.contains relative '\\'
+          || not (Filename.check_suffix relative ".json")
+        then None
+        else
+          let encoded =
+            String.sub relative 0
+              (String.length relative - String.length ".json")
+          in
+          match Core.Run_id.of_string encoded with
+          | Ok id -> Some id
+          | Error _ -> None)
+    |> List.sort_uniq Core.Run_id.compare
+    |> List.rev
+
+let list_runs (store : t) =
+  let rec load loaded = function
+    | [] -> Ok (List.rev loaded)
+    | id :: rest ->
+        let* run = load_run store (Core.Run_id.to_string id) in
+        load (run :: loaded) rest
+  in
+  load [] (stored_run_ids store)
+
+let list_runs_best_effort (store : t) =
+  let rec load loaded rejected = function
+    | [] -> (List.rev loaded, List.rev rejected)
+    | id :: rest ->
+        let encoded = Core.Run_id.to_string id in
+        (match load_run store encoded with
+        | Ok run -> load (run :: loaded) rejected rest
+        | Error error -> load loaded ((encoded, error) :: rejected) rest)
+  in
+  load [] [] (stored_run_ids store)
+
 let stats (store : t) =
   files_recursive store.root
   |> List.filter (fun relative -> not (String.equal relative maintenance_lock))
   |> List.fold_left
        (fun (count, bytes) relative ->
-         let path = Filename.concat store.root relative in
+         let path =
+           Filename.concat store.root relative |> windows_extended_path
+         in
          try
            let stat = Unix.stat path in
            (count + 1, Int64.add bytes (Int64.of_int stat.st_size))
@@ -3621,11 +4503,15 @@ let gc (store : t) ~older_than_days =
           let stale =
             List.concat_map
               (fun root ->
-                if Sys.file_exists root then
+                let native_root = windows_extended_path root in
+                if Sys.file_exists native_root then
                   files_recursive root
                   |> List.filter_map (fun relative ->
                       let path = Filename.concat root relative in
-                      if (Unix.stat path).st_mtime < cutoff then Some path
+                      if
+                        (Unix.stat (windows_extended_path path)).st_mtime
+                        < cutoff
+                      then Some path
                       else None)
                 else [])
               roots
@@ -3643,7 +4529,7 @@ let gc (store : t) ~older_than_days =
             | [] -> Ok removed
             | path :: rest -> (
                 try
-                  Sys.remove path;
+                  Sys.remove (windows_extended_path path);
                   remove (removed + 1) rest
                 with Sys_error message ->
                   Error
@@ -3671,7 +4557,8 @@ let clean (store : t) =
             | [] -> Ok ()
             | relative :: rest -> (
                 let path = store_path store relative in
-                if not (Sys.file_exists path) then remove rest
+                if not (Sys.file_exists (windows_extended_path path)) then
+                  remove rest
                 else
                   match remove_tree path with
                   | Ok () -> remove rest
@@ -3689,7 +4576,9 @@ let clean (store : t) =
                 legacy_runs_path;
               ]
           in
-          (try Sys.remove (store_path store root_latest_path)
+          (try
+             Sys.remove
+               (store_path store root_latest_path |> windows_extended_path)
            with Sys_error _ -> ());
           Ok ()
       | _ ->

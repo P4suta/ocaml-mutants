@@ -33,9 +33,18 @@ let report id : Engine.Run_store.run =
         test_command = command;
         baseline_duration = None;
         baseline_stages = [];
+        hit_map = [];
         timeout = None;
         cache_mode = "off";
+        execution_mode = "strict";
+        historical_reuse = "off";
         cache_key = "unavailable";
+        resolved_config = Engine.Config.to_yojson Engine.Config.defaults;
+        input_fingerprint = "unavailable";
+        config_digest =
+          Engine.Util.sha256
+            (Yojson.Safe.to_string ~std:true
+               (Engine.Config.to_yojson Engine.Config.defaults));
       };
     status = Engine.Run_store.Completed;
     results = [];
@@ -361,6 +370,31 @@ let test_save_consumes_exact_marker () =
       check_error_cause "invariant-violation"
         (Engine.Run_store.publish_run finalization.publication (report id));
       get_ok (Engine.Run_store.abandon_reservation store reservation))
+
+let test_list_runs_is_newest_first () =
+  with_fault_layout ~next_reservation_sequence:(monotonic_sequence 0L)
+    (fun _ -> None)
+    (fun ~parent:_ ~cache:_ ~workspace:_ ~store ->
+      let publish_next () =
+        let reservation =
+          get_ok
+            (Engine.Run_store.reserve store ~started_at:allocator_started_at)
+        in
+        let id = Engine.Run_store.reservation_id reservation in
+        ignore (publish_clean store reservation (report id));
+        id
+      in
+      let older = publish_next () in
+      let newer = publish_next () in
+      let runs = get_ok (Engine.Run_store.list_runs store) in
+      Alcotest.(check int)
+        "all immutable reports are listed" 2 (List.length runs);
+      Alcotest.(check (list string))
+        "history is newest first"
+        [ Core.Run_id.to_string newer; Core.Run_id.to_string older ]
+        (List.map
+           (fun run -> Core.Run_id.to_string run.Engine.Run_store.metadata.id)
+           runs))
 
 let test_publication_root_swap_contract () =
   let publish_boundary = ref (fun () -> ()) in
@@ -1067,6 +1101,8 @@ let () =
             test_sequence_exhaustion_fails_closed;
           Alcotest.test_case "publish consumes exact marker" `Quick
             test_save_consumes_exact_marker;
+          Alcotest.test_case "run history is newest first" `Quick
+            test_list_runs_is_newest_first;
           Alcotest.test_case "publication root swap contract" `Quick
             test_publication_root_swap_contract;
           Alcotest.test_case "join root identity contract" `Quick

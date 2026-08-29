@@ -138,6 +138,17 @@
   (run %{exe:report_contract_tests.exe})))
 
 (test
+ (name one_zero_contract_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest yojson))
+
+(rule
+ (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
+ (action
+  (run %{exe:one_zero_contract_tests.exe})))
+
+(test
  (name run_report_consistency_contract_tests)
  (libraries ocaml_mutants_core ocaml_mutants_engine alcotest yojson))
 
@@ -206,14 +217,14 @@
   dogfood_tool_contract_tests.py
   ../scripts/verify-workspace-manifest.py
   ../scripts/verify-dogfood-run.py
-  ../schema/run-report-v1.schema.json)
+  ../schema/run-report-v2.schema.json)
  (action
   (run
    python
    %{dep:dogfood_tool_contract_tests.py}
    %{dep:../scripts/verify-workspace-manifest.py}
    %{dep:../scripts/verify-dogfood-run.py}
-   %{dep:../schema/run-report-v1.schema.json})))
+   %{dep:../schema/run-report-v2.schema.json})))
 
 (test
  (name expectation_contract_tests)
@@ -319,8 +330,11 @@
  (alias schema-validation)
  (deps
   validate_schemas.py
-  ../schema/catalog-v1.schema.json
-  ../schema/run-report-v1.schema.json
+  ../schema/catalog-v2.schema.json
+  ../schema/run-report-v2.schema.json
+  ../schema/check-report-v1.schema.json
+  ../schema/event-v1.schema.json
+  ../schema/shard-plan-v1.schema.json
   ../schema/mutation-testing-report-v2.schema.json
   vendor/stryker-mutator/mutation-testing-report-schema-v2.json
   vendor/stryker-mutator/LICENSE
@@ -333,8 +347,11 @@
    %{dep:validate_schemas.py}
    %{exe:../bin/main.exe}
    %{dep:fixtures/custom-command/dune-project}
-   %{dep:../schema/catalog-v1.schema.json}
-   %{dep:../schema/run-report-v1.schema.json}
+   %{dep:../schema/catalog-v2.schema.json}
+   %{dep:../schema/run-report-v2.schema.json}
+   %{dep:../schema/check-report-v1.schema.json}
+   %{dep:../schema/event-v1.schema.json}
+   %{dep:../schema/shard-plan-v1.schema.json}
    %{dep:../schema/mutation-testing-report-v2.schema.json}
    %{dep:vendor/stryker-mutator/mutation-testing-report-schema-v2.json}
    %{dep:vendor/stryker-mutator/LICENSE}
@@ -346,8 +363,11 @@
  (deps
   (env_var OCAML_MUTANTS_ACTIVE)
   validate_schemas.py
-  ../schema/catalog-v1.schema.json
-  ../schema/run-report-v1.schema.json
+  ../schema/catalog-v2.schema.json
+  ../schema/run-report-v2.schema.json
+  ../schema/check-report-v1.schema.json
+  ../schema/event-v1.schema.json
+  ../schema/shard-plan-v1.schema.json
   ../schema/mutation-testing-report-v2.schema.json
   vendor/stryker-mutator/mutation-testing-report-schema-v2.json
   vendor/stryker-mutator/LICENSE
@@ -360,8 +380,11 @@
    %{dep:validate_schemas.py}
    %{exe:../bin/main.exe}
    %{dep:fixtures/custom-command/dune-project}
-   %{dep:../schema/catalog-v1.schema.json}
-   %{dep:../schema/run-report-v1.schema.json}
+   %{dep:../schema/catalog-v2.schema.json}
+   %{dep:../schema/run-report-v2.schema.json}
+   %{dep:../schema/check-report-v1.schema.json}
+   %{dep:../schema/event-v1.schema.json}
+   %{dep:../schema/shard-plan-v1.schema.json}
    %{dep:../schema/mutation-testing-report-v2.schema.json}
    %{dep:vendor/stryker-mutator/mutation-testing-report-schema-v2.json}
    %{dep:vendor/stryker-mutator/LICENSE}

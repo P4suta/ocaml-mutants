@@ -118,6 +118,18 @@ module type SERVICES = sig
 end
 
 module Make (Services : SERVICES) : sig
+  val run_with_cancel :
+    cancel:Cancel.t ->
+    root:string ->
+    config:Config.t ->
+    fresh:bool ->
+    selection:Application_request.selection ->
+    output:Application_request.output ->
+    (int, Error.t) result
+  (** Runs the same reservation, snapshot, publication, and cleanup lifecycle as
+      [run] with a caller-owned cancellation token. The caller is responsible for
+      translating its input or process-lifetime events into [Cancel.request]. *)
+
   val run :
     root:string ->
     config:Config.t ->

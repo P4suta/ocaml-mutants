@@ -327,7 +327,7 @@ module Make (Process : PROCESS) = struct
     let locked =
       with_analysis_lock ~cancel (fun () ->
           Process.run ~cancel ~cwd:root
-            ~env:[ ("DUNE_CACHE", Some "disabled") ]
+            ~env:(Test_command.dune_cache_environment ~root)
             ([ "dune"; "build"; "--build-dir"; build_dir; "@all" ] @ cmt_targets))
     in
     let* result = locked in

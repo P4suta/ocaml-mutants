@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ocaml-mutants.dev/schema/event-v1.schema.json",
+  "title": "ocaml-mutants event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["document_type", "schema_version", "sequence", "timestamp", "type", "payload"],
+  "properties": {
+    "document_type": { "const": "ocaml-mutants.event-v1" },
+    "schema_version": { "const": 1 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "timestamp": { "type": "string", "minLength": 1 },
+    "type": {
+      "enum": ["run-started", "phase-started", "progress", "mutant-settled", "warning", "run-finished"]
+    },
+    "payload": { "type": "object" }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "type": { "const": "run-started" },
+        "payload": { "$ref": "#/$defs/run_started" }
+      }
+    },
+    {
+      "properties": {
+        "type": { "const": "phase-started" },
+        "payload": { "$ref": "#/$defs/phase_started" }
+      }
+    },
+    {
+      "properties": {
+        "type": { "const": "progress" },
+        "payload": { "$ref": "#/$defs/progress" }
+      }
+    },
+    {
+      "properties": {
+        "type": { "const": "mutant-settled" },
+        "payload": { "$ref": "#/$defs/mutant_settled" }
+      }
+    },
+    {
+      "properties": {
+        "type": { "const": "warning" },
+        "payload": { "$ref": "#/$defs/warning" }
+      }
+    },
+    {
+      "properties": {
+        "type": { "const": "run-finished" },
+        "payload": { "$ref": "#/$defs/run_finished" }
+      }
+    }
+  ],
+  "$defs": {
+    "run_started": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id"],
+      "properties": { "run_id": { "type": "string", "minLength": 1 } }
+    },
+    "phase_started": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "total"],
+      "properties": {
+        "phase": { "type": "string", "minLength": 1 },
+        "total": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "completed", "total", "workers", "cache_hits", "resume_hits", "elapsed_seconds", "eta_seconds"],
+      "properties": {
+        "phase": { "type": "string", "minLength": 1 },
+        "completed": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "workers": { "type": "integer", "minimum": 0 },
+        "cache_hits": { "type": "integer", "minimum": 0 },
+        "resume_hits": { "type": "integer", "minimum": 0 },
+        "elapsed_seconds": { "type": "number", "minimum": 0 },
+        "eta_seconds": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "mutant_settled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mutant_id", "outcome", "cached", "duration_seconds"],
+      "properties": {
+        "mutant_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "outcome": {
+          "enum": ["killed", "survived", "timeout", "timeout-unconfirmed", "inconclusive", "error"]
+        },
+        "cached": { "type": "boolean" },
+        "duration_seconds": { "type": "number", "minimum": 0 }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "run_finished": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exit_code"],
+      "properties": { "exit_code": { "type": "integer" } }
+    }
+  }
+}

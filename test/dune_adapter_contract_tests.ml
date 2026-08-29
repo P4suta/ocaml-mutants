@@ -184,12 +184,17 @@ let build cancel =
     ~cmt_targets:[ "lib/a.cmt"; "bin/b.cmt" ]
 
 let test_build_analysis_contract () =
+  let cache_env =
+    [
+      ("DUNE_CACHE", Some "enabled-except-user-rules");
+      ( "DUNE_CACHE_ROOT",
+        Some (Filename.concat "workspace" ".ocaml-mutants-compiler-cache") );
+    ]
+  in
   let success, invocation =
     invoke (Fake_process.success ~stdout:"built" ()) build
   in
-  check_invocation ~argv:build_command
-    ~env:[ ("DUNE_CACHE", Some "disabled") ]
-    invocation;
+  check_invocation ~argv:build_command ~env:cache_env invocation;
   (match success with
   | Ok result ->
       Alcotest.(check string) "opaque result retained" "built" result.stdout
@@ -197,17 +202,13 @@ let test_build_analysis_contract () =
   let failure, invocation =
     invoke (Fake_process.failed ~stderr:"build failed" ()) build
   in
-  check_invocation ~argv:build_command
-    ~env:[ ("DUNE_CACHE", Some "disabled") ]
-    invocation;
+  check_invocation ~argv:build_command ~env:cache_env invocation;
   expect_error ~phase:"analysis" ~cause:"process-failure"
     ~message:"analysis build failed:\nbuild failed"
     ~context:[ ("status", "exited 7") ]
     failure;
   let cancellation, invocation = invoke Fake_process.cancelled_result build in
-  check_invocation ~argv:build_command
-    ~env:[ ("DUNE_CACHE", Some "disabled") ]
-    invocation;
+  check_invocation ~argv:build_command ~env:cache_env invocation;
   expect_error ~phase:"analysis" ~cause:"interrupted"
     ~message:"analysis build was interrupted" ~context:[] cancellation
 

@@ -1,6 +1,19 @@
 module Core = Ocaml_mutants_core
 
 type cache_mode = Auto | On | Off
+type historical_reuse = Reuse_off | Reuse_exact | Reuse_estimated
+type execution_mode = Strict | Fast
+type test_driver = Auto_driver | Dune_driver | Command_driver
+
+type artifact_format =
+  | Terminal
+  | Native_json
+  | Html
+  | Markdown
+  | Sarif
+  | Stryker
+
+type source_embedding = Context | All_source | No_source
 type expectation = { id : string; reason : string }
 type stage = { name : string; command : Core.Nonempty_argv.t }
 
@@ -13,21 +26,50 @@ type mutation = {
 }
 
 type test = {
+  driver : test_driver;
   command : Core.Nonempty_argv.t;
   stages : stage list;
   timeout : Core.Duration.t option;
   baseline_runs : Core.Positive_int.t;
   parallel_safe : bool;
+  external_inputs : string list;
+  reproducible : bool;
 }
 
-type execution = { jobs : Core.Positive_int.t }
-type cache = { mode : cache_mode; directory : string option }
+type execution = { mode : execution_mode; jobs : Core.Positive_int.t }
+
+type cache = {
+  mode : cache_mode;
+  directory : string option;
+  historical_reuse : historical_reuse;
+}
+
+type policy = {
+  require_complete : bool;
+  max_unexpected_survivors : int;
+  minimum_score : float option;
+  maximum_score_drop : float option;
+  allow_estimated : bool;
+}
+
+type report = { formats : artifact_format list; directory : string option }
+
+type privacy = {
+  stdout_limit_bytes : int;
+  stderr_limit_bytes : int;
+  redactions : string list;
+  source_embedding : source_embedding;
+}
 
 type t = {
+  version : int;
   mutation : mutation;
   test : test;
   execution : execution;
   cache : cache;
+  policy : policy;
+  report : report;
+  privacy : privacy;
 }
 
 type overrides = {
@@ -48,6 +90,7 @@ let default_command =
 
 let defaults =
   {
+    version = 2;
     mutation =
       {
         include_ = [ "**/*.ml" ];
@@ -58,20 +101,40 @@ let defaults =
       };
     test =
       {
+        driver = Auto_driver;
         command = default_command;
         stages = [ { name = "full"; command = default_command } ];
         timeout = None;
         baseline_runs = get_ok (Core.Positive_int.of_int 3);
         parallel_safe = false;
+        external_inputs = [];
+        reproducible = true;
       };
     execution =
       {
+        mode = Strict;
         jobs =
           get_ok
             (Core.Positive_int.of_int
                (max 1 (Domain.recommended_domain_count () - 1)));
       };
-    cache = { mode = Auto; directory = None };
+    cache = { mode = Off; directory = None; historical_reuse = Reuse_off };
+    policy =
+      {
+        require_complete = true;
+        max_unexpected_survivors = 0;
+        minimum_score = None;
+        maximum_score_drop = None;
+        allow_estimated = false;
+      };
+    report = { formats = [ Terminal; Native_json ]; directory = None };
+    privacy =
+      {
+        stdout_limit_bytes = 65536;
+        stderr_limit_bytes = 65536;
+        redactions = [];
+        source_embedding = Context;
+      };
   }
 
 let empty_overrides =
@@ -249,6 +312,13 @@ let strings path = function
       invalid path
         (Printf.sprintf "expected string array, got %s" (type_name value))
 
+let nonempty_strings path value =
+  match strings path value with
+  | Error _ as error -> error
+  | Ok values when List.for_all (fun value -> String.trim value <> "") values ->
+      valid values
+  | Ok _ -> invalid path "array entries must be non-empty strings"
+
 let positive_int path value =
   match integer path value with
   | Error _ as error -> error
@@ -256,6 +326,19 @@ let positive_int path value =
       match Core.Positive_int.of_int value with
       | Ok value -> valid value
       | Error message -> invalid path message)
+
+let nonnegative_int path value =
+  match integer path value with
+  | Error _ as error -> error
+  | Ok value when value >= 0 -> valid value
+  | Ok _ -> invalid path "expected a non-negative integer"
+
+let percentage path value =
+  match number path value with
+  | Error _ as error -> error
+  | Ok value when Float.is_finite value && value >= 0. && value <= 100. ->
+      valid value
+  | Ok _ -> invalid path "expected a finite percentage between 0 and 100"
 
 let duration path value =
   match number path value with
@@ -265,6 +348,20 @@ let duration path value =
       | Ok value when Core.Duration.to_seconds value > 0. -> valid value
       | Ok _ -> invalid path "duration must be positive"
       | Error message -> invalid path message)
+
+let timeout path = function
+  | Otoml.TomlString "auto" -> valid None
+  | Otoml.TomlString value ->
+      invalid path
+        (Printf.sprintf "expected \"auto\" or a positive number, got %S" value)
+  | value -> map Option.some (duration path value)
+
+let jobs path = function
+  | Otoml.TomlString "auto" -> valid defaults.execution.jobs
+  | Otoml.TomlString value ->
+      invalid path
+        (Printf.sprintf "expected \"auto\" or a positive integer, got %S" value)
+  | value -> positive_int path value
 
 let command path value =
   match strings path value with
@@ -413,6 +510,99 @@ let cache_mode path value =
       invalid path
         (Printf.sprintf "expected \"auto\", \"on\", or \"off\", got %S" value)
 
+let historical_reuse path value =
+  match string path value with
+  | Error _ as error -> error
+  | Ok "off" -> valid Reuse_off
+  | Ok "exact" -> valid Reuse_exact
+  | Ok "estimated" -> valid Reuse_estimated
+  | Ok value ->
+      invalid path
+        (Printf.sprintf "expected \"off\", \"exact\", or \"estimated\", got %S"
+           value)
+
+let execution_mode path value =
+  match string path value with
+  | Error _ as error -> error
+  | Ok "strict" -> valid Strict
+  | Ok "fast" -> valid Fast
+  | Ok value ->
+      invalid path
+        (Printf.sprintf "expected \"strict\" or \"fast\", got %S" value)
+
+let test_driver path value =
+  match string path value with
+  | Error _ as error -> error
+  | Ok "auto" -> valid Auto_driver
+  | Ok "dune" -> valid Dune_driver
+  | Ok "command" -> valid Command_driver
+  | Ok value ->
+      invalid path
+        (Printf.sprintf "expected \"auto\", \"dune\", or \"command\", got %S"
+           value)
+
+let artifact_format path value =
+  match string path value with
+  | Error _ as error -> error
+  | Ok "terminal" -> valid Terminal
+  | Ok "json" -> valid Native_json
+  | Ok "html" -> valid Html
+  | Ok "markdown" -> valid Markdown
+  | Ok "sarif" -> valid Sarif
+  | Ok "stryker" -> valid Stryker
+  | Ok value ->
+      invalid path
+        (Printf.sprintf
+           "expected terminal, json, html, markdown, sarif, or stryker, got %S"
+           value)
+
+let artifact_format_name = function
+  | Terminal -> "terminal"
+  | Native_json -> "json"
+  | Html -> "html"
+  | Markdown -> "markdown"
+  | Sarif -> "sarif"
+  | Stryker -> "stryker"
+
+let artifact_formats path = function
+  | Otoml.TomlArray values -> (
+      let decoded =
+        List.fold_left
+          (fun result value ->
+            match (result, artifact_format path value) with
+            | Ok formats, Ok format -> Ok (format :: formats)
+            | Error left, Error right -> Error (left @ right)
+            | Error errors, Ok _ | Ok _, Error errors -> Error errors)
+          (Ok []) values
+        |> map List.rev
+      in
+      match decoded with
+      | Ok [] -> invalid path "at least one report format is required"
+      | Ok formats ->
+          let names =
+            List.map (fun format -> artifact_format_name format) formats
+          in
+          if
+            List.length names
+            = List.length (List.sort_uniq String.compare names)
+          then valid formats
+          else invalid path "report formats must be unique"
+      | Error _ as error -> error)
+  | value ->
+      invalid path
+        (Printf.sprintf "expected string array, got %s" (type_name value))
+
+let source_embedding path value =
+  match string path value with
+  | Error _ as error -> error
+  | Ok "context" -> valid Context
+  | Ok "all" -> valid All_source
+  | Ok "none" -> valid No_source
+  | Ok value ->
+      invalid path
+        (Printf.sprintf "expected \"context\", \"all\", or \"none\", got %S"
+           value)
+
 let profile path value =
   match string path value with
   | Error _ as error -> error
@@ -421,17 +611,64 @@ let profile path value =
       | Ok profile -> valid profile
       | Error message -> invalid path message)
 
-let known_keys =
-  [
-    ([], [ "version"; "mutation"; "test"; "execution"; "cache" ]);
-    ([ "mutation" ], [ "include"; "exclude"; "operators"; "profile"; "expect" ]);
-    ( [ "test" ],
-      [ "command"; "stages"; "timeout"; "baseline_runs"; "parallel_safe" ] );
-    ([ "execution" ], [ "jobs" ]);
-    ([ "cache" ], [ "mode"; "directory" ]);
-  ]
+let known_keys version =
+  if version = 1 then
+    [
+      ([], [ "version"; "mutation"; "test"; "execution"; "cache" ]);
+      ( [ "mutation" ],
+        [ "include"; "exclude"; "operators"; "profile"; "expect" ] );
+      ( [ "test" ],
+        [ "command"; "stages"; "timeout"; "baseline_runs"; "parallel_safe" ] );
+      ([ "execution" ], [ "jobs" ]);
+      ([ "cache" ], [ "mode"; "directory" ]);
+    ]
+  else
+    [
+      ( [],
+        [
+          "version";
+          "mutation";
+          "test";
+          "execution";
+          "cache";
+          "policy";
+          "report";
+          "privacy";
+        ] );
+      ( [ "mutation" ],
+        [ "include"; "exclude"; "operators"; "profile"; "expect" ] );
+      ( [ "test" ],
+        [
+          "driver";
+          "command";
+          "stages";
+          "timeout";
+          "baseline_runs";
+          "parallel_safe";
+          "external_inputs";
+          "reproducible";
+        ] );
+      ([ "execution" ], [ "mode"; "jobs" ]);
+      ([ "cache" ], [ "mode"; "directory"; "historical_reuse" ]);
+      ( [ "policy" ],
+        [
+          "require_complete";
+          "max_unexpected_survivors";
+          "minimum_score";
+          "maximum_score_drop";
+          "allow_estimated";
+        ] );
+      ([ "report" ], [ "formats"; "directory" ]);
+      ( [ "privacy" ],
+        [
+          "stdout_limit_bytes";
+          "stderr_limit_bytes";
+          "redactions";
+          "source_embedding";
+        ] );
+    ]
 
-let unknown_keys root =
+let unknown_keys ~version root =
   let errors = ref [] in
   List.iter
     (fun (path, allowed) ->
@@ -457,87 +694,196 @@ let unknown_keys root =
             }
             :: !errors
       | Some _ -> ())
-    known_keys;
+    (known_keys version);
   List.rev !errors
 
+let decode_version root =
+  match lookup root [ "version" ] with
+  | None -> invalid [ "version" ] "missing required key (expected version = 2)"
+  | Some value -> (
+      match integer [ "version" ] value with
+      | Ok ((1 | 2) as version) -> valid version
+      | Ok value ->
+          invalid [ "version" ]
+            (Printf.sprintf "unsupported config version %d" value)
+      | Error _ as error -> error)
+
 let decode root =
-  let version =
-    match lookup root [ "version" ] with
-    | None ->
-        invalid [ "version" ] "missing required key (expected version = 1)"
-    | Some value -> (
-        match integer [ "version" ] value with
-        | Ok 1 -> valid ()
-        | Ok value ->
-            invalid [ "version" ]
-              (Printf.sprintf "unsupported config version %d" value)
-        | Error _ as error -> error)
-  in
-  let+ () = version
-  and+ include_ = optional root [ "mutation"; "include" ] strings
-  and+ exclude = optional root [ "mutation"; "exclude" ] strings
-  and+ operators = optional root [ "mutation"; "operators" ] operators
-  and+ profile = optional root [ "mutation"; "profile" ] profile
-  and+ expectations = optional root [ "mutation"; "expect" ] expectations
-  and+ command = optional root [ "test"; "command" ] command
-  and+ stages = optional root [ "test"; "stages" ] stages
-  and+ () =
-    match
-      (lookup root [ "test"; "command" ], lookup root [ "test"; "stages" ])
-    with
-    | Some _, Some _ ->
-        invalid [ "test" ]
-          "test.command and test.stages cannot be used together"
-    | _ -> valid ()
-  and+ timeout = optional root [ "test"; "timeout" ] duration
-  and+ baseline_runs = optional root [ "test"; "baseline_runs" ] positive_int
-  and+ parallel_safe = optional root [ "test"; "parallel_safe" ] boolean
-  and+ jobs = optional root [ "execution"; "jobs" ] positive_int
-  and+ mode = optional root [ "cache"; "mode" ] cache_mode
-  and+ directory = optional root [ "cache"; "directory" ] string in
-  {
-    mutation =
+  match decode_version root with
+  | Error _ as error -> error
+  | Ok version ->
+      let version_check =
+        match lookup root [ "version" ] with
+        | Some _ -> valid ()
+        | None -> assert false
+      in
+      let+ () = version_check
+      and+ include_ = optional root [ "mutation"; "include" ] strings
+      and+ exclude = optional root [ "mutation"; "exclude" ] strings
+      and+ operators = optional root [ "mutation"; "operators" ] operators
+      and+ profile = optional root [ "mutation"; "profile" ] profile
+      and+ expectations = optional root [ "mutation"; "expect" ] expectations
+      and+ command = optional root [ "test"; "command" ] command
+      and+ stages = optional root [ "test"; "stages" ] stages
+      and+ () =
+        match
+          (lookup root [ "test"; "command" ], lookup root [ "test"; "stages" ])
+        with
+        | Some _, Some _ ->
+            invalid [ "test" ]
+              "test.command and test.stages cannot be used together"
+        | _ -> valid ()
+      and+ driver = optional root [ "test"; "driver" ] test_driver
+      and+ timeout = optional root [ "test"; "timeout" ] timeout
+      and+ baseline_runs =
+        optional root [ "test"; "baseline_runs" ] positive_int
+      and+ parallel_safe = optional root [ "test"; "parallel_safe" ] boolean
+      and+ external_inputs =
+        optional root [ "test"; "external_inputs" ] nonempty_strings
+      and+ reproducible = optional root [ "test"; "reproducible" ] boolean
+      and+ execution_mode = optional root [ "execution"; "mode" ] execution_mode
+      and+ jobs = optional root [ "execution"; "jobs" ] jobs
+      and+ mode = optional root [ "cache"; "mode" ] cache_mode
+      and+ historical_reuse =
+        optional root [ "cache"; "historical_reuse" ] historical_reuse
+      and+ directory = optional root [ "cache"; "directory" ] string
+      and+ require_complete =
+        optional root [ "policy"; "require_complete" ] boolean
+      and+ max_unexpected_survivors =
+        optional root [ "policy"; "max_unexpected_survivors" ] nonnegative_int
+      and+ minimum_score =
+        optional root [ "policy"; "minimum_score" ] percentage
+      and+ maximum_score_drop =
+        optional root [ "policy"; "maximum_score_drop" ] percentage
+      and+ allow_estimated =
+        optional root [ "policy"; "allow_estimated" ] boolean
+      and+ formats = optional root [ "report"; "formats" ] artifact_formats
+      and+ report_directory = optional root [ "report"; "directory" ] string
+      and+ stdout_limit_bytes =
+        optional root [ "privacy"; "stdout_limit_bytes" ] nonnegative_int
+      and+ stderr_limit_bytes =
+        optional root [ "privacy"; "stderr_limit_bytes" ] nonnegative_int
+      and+ redactions =
+        optional root [ "privacy"; "redactions" ] nonempty_strings
+      and+ source_embedding =
+        optional root [ "privacy"; "source_embedding" ] source_embedding
+      in
+      let historical_reuse =
+        match (version, historical_reuse, mode) with
+        | 1, _, Some On -> Reuse_exact
+        | 1, _, Some (Auto | Off) | 1, _, None -> Reuse_off
+        | 2, Some value, _ -> value
+        | 2, None, _ -> defaults.cache.historical_reuse
+        | _ -> assert false
+      in
       {
-        include_ = Option.value include_ ~default:defaults.mutation.include_;
-        exclude = Option.value exclude ~default:defaults.mutation.exclude;
-        operators = Option.value operators ~default:defaults.mutation.operators;
-        profile = Option.value profile ~default:defaults.mutation.profile;
-        expectations =
-          Option.value expectations ~default:defaults.mutation.expectations;
-      };
-    test =
-      {
-        command =
-          (match (command, stages) with
-          | Some command, None -> command
-          | None, Some ({ command; _ } :: _) -> command
-          | None, Some [] | None, None -> defaults.test.command
-          | Some _, Some _ -> assert false);
-        stages =
-          (match (command, stages) with
-          | Some command, None -> [ { name = "test"; command } ]
-          | None, Some stages -> stages
-          | None, None -> defaults.test.stages
-          | Some _, Some _ -> assert false);
-        timeout =
-          (match timeout with
-          | None -> defaults.test.timeout
-          | Some value -> Some value);
-        baseline_runs =
-          Option.value baseline_runs ~default:defaults.test.baseline_runs;
-        parallel_safe =
-          Option.value parallel_safe ~default:defaults.test.parallel_safe;
-      };
-    execution = { jobs = Option.value jobs ~default:defaults.execution.jobs };
-    cache =
-      {
-        mode = Option.value mode ~default:defaults.cache.mode;
-        directory =
-          (match directory with
-          | None -> defaults.cache.directory
-          | Some value -> Some value);
-      };
-  }
+        version = 2;
+        mutation =
+          {
+            include_ = Option.value include_ ~default:defaults.mutation.include_;
+            exclude = Option.value exclude ~default:defaults.mutation.exclude;
+            operators =
+              Option.value operators ~default:defaults.mutation.operators;
+            profile = Option.value profile ~default:defaults.mutation.profile;
+            expectations =
+              Option.value expectations ~default:defaults.mutation.expectations;
+          };
+        test =
+          {
+            driver =
+              (match (version, driver, command, stages) with
+              | _, Some driver, _, _ -> driver
+              | 1, None, _, Some _
+              | 1, None, Some _, None ->
+                  (* v1 had no driver abstraction: an explicitly configured
+                     argv or ordered stage list was always executed verbatim.
+                     Preserve that behavior while normalizing the in-memory
+                     representation to v2, so migration cannot silently turn
+                     [dune build] into the inventory-driven [@runtest] plan. *)
+                  Command_driver
+              | 1, None, None, None | 2, None, _, _ -> defaults.test.driver
+              | _ -> assert false);
+            command =
+              (match (command, stages) with
+              | Some command, None -> command
+              | None, Some ({ command; _ } :: _) -> command
+              | None, Some [] | None, None -> defaults.test.command
+              | Some _, Some _ -> assert false);
+            stages =
+              (match (command, stages) with
+              | Some command, None -> [ { name = "test"; command } ]
+              | None, Some stages -> stages
+              | None, None -> defaults.test.stages
+              | Some _, Some _ -> assert false);
+            timeout =
+              (match timeout with
+              | None -> defaults.test.timeout
+              | Some value -> value);
+            baseline_runs =
+              Option.value baseline_runs ~default:defaults.test.baseline_runs;
+            parallel_safe =
+              Option.value parallel_safe ~default:defaults.test.parallel_safe;
+            external_inputs =
+              Option.value external_inputs
+                ~default:defaults.test.external_inputs;
+            reproducible =
+              Option.value reproducible ~default:defaults.test.reproducible;
+          };
+        execution =
+          {
+            mode = Option.value execution_mode ~default:defaults.execution.mode;
+            jobs = Option.value jobs ~default:defaults.execution.jobs;
+          };
+        cache =
+          {
+            mode =
+              (match (version, mode, historical_reuse) with
+              | 1, Some value, _ -> value
+              | 1, None, _ -> Auto
+              | 2, Some value, _ -> value
+              | 2, None, Reuse_off -> Off
+              | 2, None, (Reuse_exact | Reuse_estimated) -> On
+              | _ -> assert false);
+            directory =
+              (match directory with
+              | None -> defaults.cache.directory
+              | Some value -> Some value);
+            historical_reuse;
+          };
+        policy =
+          {
+            require_complete =
+              Option.value require_complete
+                ~default:defaults.policy.require_complete;
+            max_unexpected_survivors =
+              Option.value max_unexpected_survivors
+                ~default:defaults.policy.max_unexpected_survivors;
+            minimum_score;
+            maximum_score_drop;
+            allow_estimated =
+              Option.value allow_estimated
+                ~default:defaults.policy.allow_estimated;
+          };
+        report =
+          {
+            formats = Option.value formats ~default:defaults.report.formats;
+            directory = report_directory;
+          };
+        privacy =
+          {
+            stdout_limit_bytes =
+              Option.value stdout_limit_bytes
+                ~default:defaults.privacy.stdout_limit_bytes;
+            stderr_limit_bytes =
+              Option.value stderr_limit_bytes
+                ~default:defaults.privacy.stderr_limit_bytes;
+            redactions =
+              Option.value redactions ~default:defaults.privacy.redactions;
+            source_embedding =
+              Option.value source_embedding
+                ~default:defaults.privacy.source_embedding;
+          };
+      }
 
 let format_diagnostics ~file ~locations diagnostics =
   diagnostics
@@ -548,16 +894,34 @@ let format_diagnostics ~file ~locations diagnostics =
         diagnostic.message)
   |> String.concat "\n"
 
-let parse ~file contents =
+type origin = Defaults | Version_1 | Version_2
+type loaded = { config : t; origin : origin; warnings : string list }
+
+let parse_with_metadata ~file contents =
   let locations = Location_index.create contents in
   try
     let root = Otoml.Parser.from_string contents in
-    let unknown = unknown_keys root in
-    match decode root with
-    | Ok config when unknown = [] -> Ok config
-    | Ok _ -> Error (format_diagnostics ~file ~locations unknown)
-    | Error errors ->
-        Error (format_diagnostics ~file ~locations (unknown @ errors))
+    match decode_version root with
+    | Error errors -> Error (format_diagnostics ~file ~locations errors)
+    | Ok version -> (
+        let unknown = unknown_keys ~version root in
+        match decode root with
+        | Ok config when unknown = [] ->
+            let origin, warnings =
+              if version = 1 then
+                ( Version_1,
+                  [
+                    Printf.sprintf
+                      "%s uses deprecated config version 1; run `ocaml-mutants \
+                       config migrate --write`"
+                      file;
+                  ] )
+              else (Version_2, [])
+            in
+            Ok { config; origin; warnings }
+        | Ok _ -> Error (format_diagnostics ~file ~locations unknown)
+        | Error errors ->
+            Error (format_diagnostics ~file ~locations (unknown @ errors)))
   with
   | Otoml.Parse_error (location, message) ->
       let line, column = Option.value location ~default:(1, 1) in
@@ -567,16 +931,25 @@ let parse ~file contents =
   | Otoml.Type_error message | Otoml.Key_error message ->
       Error (Printf.sprintf "%s:1:1: %s" file message)
 
-let load root =
+let parse ~file contents =
+  Result.map (fun loaded -> loaded.config) (parse_with_metadata ~file contents)
+
+let load_with_metadata root =
   let path = Filename.concat root ".ocaml-mutants.toml" in
-  if not (Sys.file_exists path) then Ok defaults
+  if not (Sys.file_exists path) then
+    Ok { config = defaults; origin = Defaults; warnings = [] }
   else
     match Util.read_file path with
     | Error message -> Error (Printf.sprintf "%s: %s" path message)
-    | Ok contents -> parse ~file:path contents
+    | Ok contents -> parse_with_metadata ~file:path contents
+
+let load root =
+  Result.map (fun loaded -> loaded.config) (load_with_metadata root)
 
 let apply config overrides =
   {
+    config with
+    version = 2;
     mutation =
       {
         include_ =
@@ -591,21 +964,28 @@ let apply config overrides =
       };
     test =
       {
+        config.test with
         command = Option.value overrides.command ~default:config.test.command;
         stages =
           (match overrides.command with
           | Some command -> [ { name = "test"; command } ]
           | None -> config.test.stages);
         timeout = Option.value overrides.timeout ~default:config.test.timeout;
-        baseline_runs = config.test.baseline_runs;
-        parallel_safe = config.test.parallel_safe;
       };
     execution =
-      { jobs = Option.value overrides.jobs ~default:config.execution.jobs };
+      {
+        config.execution with
+        jobs = Option.value overrides.jobs ~default:config.execution.jobs;
+      };
     cache =
       {
         config.cache with
         mode = Option.value overrides.cache_mode ~default:config.cache.mode;
+        historical_reuse =
+          (match overrides.cache_mode with
+          | Some Off -> Reuse_off
+          | Some On -> Reuse_exact
+          | Some Auto | None -> config.cache.historical_reuse);
       };
   }
 
@@ -617,9 +997,247 @@ let cache_enabled mode ~command =
       ignore command;
       false
 
+let historical_reuse_enabled = function
+  | Reuse_off -> false
+  | Reuse_exact | Reuse_estimated -> true
+
+let historical_reuse_name = function
+  | Reuse_off -> "off"
+  | Reuse_exact -> "exact"
+  | Reuse_estimated -> "estimated"
+
+let execution_mode_name = function Strict -> "strict" | Fast -> "fast"
+let cache_mode_name = function Auto -> "auto" | On -> "on" | Off -> "off"
+
+let driver_name = function
+  | Auto_driver -> "auto"
+  | Dune_driver -> "dune"
+  | Command_driver -> "command"
+
+let source_embedding_name = function
+  | Context -> "context"
+  | All_source -> "all"
+  | No_source -> "none"
+
+let json_strings values = `List (List.map (fun value -> `String value) values)
+let json_command command = Core.Nonempty_argv.to_list command |> json_strings
+let json_option_string = function None -> `Null | Some value -> `String value
+let json_option_float = function None -> `Null | Some value -> `Float value
+
+let to_yojson config =
+  `Assoc
+    [
+      ("version", `Int 2);
+      ( "mutation",
+        `Assoc
+          [
+            ( "profile",
+              `String (Core.Operator.Profile.name config.mutation.profile) );
+            ("include", json_strings config.mutation.include_);
+            ("exclude", json_strings config.mutation.exclude);
+            ( "operators",
+              config.mutation.operators
+              |> List.map Core.Operator.Family.name
+              |> json_strings );
+            ( "expectations",
+              `List
+                (List.map
+                   (fun expectation ->
+                     `Assoc
+                       [
+                         ("id", `String expectation.id);
+                         ("reason", `String expectation.reason);
+                       ])
+                   config.mutation.expectations) );
+          ] );
+      ( "test",
+        `Assoc
+          [
+            ("driver", `String (driver_name config.test.driver));
+            ("command", json_command config.test.command);
+            ( "stages",
+              `List
+                (List.map
+                   (fun stage ->
+                     `Assoc
+                       [
+                         ("name", `String stage.name);
+                         ("command", json_command stage.command);
+                       ])
+                   config.test.stages) );
+            ( "timeout_seconds",
+              match config.test.timeout with
+              | None -> `Null
+              | Some value -> `Float (Core.Duration.to_seconds value) );
+            ( "baseline_runs",
+              `Int (Core.Positive_int.to_int config.test.baseline_runs) );
+            ("parallel_safe", `Bool config.test.parallel_safe);
+            ("external_inputs", json_strings config.test.external_inputs);
+            ("reproducible", `Bool config.test.reproducible);
+          ] );
+      ( "execution",
+        `Assoc
+          [
+            ("mode", `String (execution_mode_name config.execution.mode));
+            ("jobs", `Int (Core.Positive_int.to_int config.execution.jobs));
+          ] );
+      ( "cache",
+        `Assoc
+          [
+            ("mode", `String (cache_mode_name config.cache.mode));
+            ("directory", json_option_string config.cache.directory);
+            ( "historical_reuse",
+              `String (historical_reuse_name config.cache.historical_reuse) );
+          ] );
+      ( "policy",
+        `Assoc
+          [
+            ("require_complete", `Bool config.policy.require_complete);
+            ( "max_unexpected_survivors",
+              `Int config.policy.max_unexpected_survivors );
+            ("minimum_score", json_option_float config.policy.minimum_score);
+            ( "maximum_score_drop",
+              json_option_float config.policy.maximum_score_drop );
+            ("allow_estimated", `Bool config.policy.allow_estimated);
+          ] );
+      ( "report",
+        `Assoc
+          [
+            ( "formats",
+              config.report.formats
+              |> List.map artifact_format_name
+              |> json_strings );
+            ("directory", json_option_string config.report.directory);
+          ] );
+      ( "privacy",
+        `Assoc
+          [
+            ("stdout_limit_bytes", `Int config.privacy.stdout_limit_bytes);
+            ("stderr_limit_bytes", `Int config.privacy.stderr_limit_bytes);
+            ("redactions", json_strings config.privacy.redactions);
+            ( "source_embedding",
+              `String (source_embedding_name config.privacy.source_embedding) );
+          ] );
+    ]
+
+let report_redaction_placeholder = "<redacted>"
+
+let to_report_yojson config =
+  to_yojson
+    {
+      config with
+      privacy =
+        {
+          config.privacy with
+          redactions =
+            List.map
+              (Fun.const report_redaction_placeholder)
+              config.privacy.redactions;
+        };
+    }
+
+let toml_string value = Printf.sprintf "%S" value
+
+let toml_strings values =
+  "[" ^ String.concat ", " (List.map toml_string values) ^ "]"
+
+let command_toml command = Core.Nonempty_argv.to_list command |> toml_strings
+
+let option_float value =
+  match value with None -> None | Some value -> Some (string_of_float value)
+
+let to_toml config =
+  let buffer = Buffer.create 2048 in
+  let line format =
+    Printf.ksprintf
+      (fun value -> Buffer.add_string buffer (value ^ "\n"))
+      format
+  in
+  line "# ocaml-mutants configuration v2";
+  line "version = 2";
+  line "";
+  line "[mutation]";
+  line "profile = %s"
+    (toml_string (Core.Operator.Profile.name config.mutation.profile));
+  line "include = %s" (toml_strings config.mutation.include_);
+  line "exclude = %s" (toml_strings config.mutation.exclude);
+  line "operators = %s"
+    (config.mutation.operators
+    |> List.map Core.Operator.Family.name
+    |> toml_strings);
+  List.iter
+    (fun expectation ->
+      line "";
+      line "[[mutation.expect]]";
+      line "id = %s" (toml_string expectation.id);
+      line "reason = %s" (toml_string expectation.reason))
+    config.mutation.expectations;
+  line "";
+  line "[test]";
+  line "driver = %s" (toml_string (driver_name config.test.driver));
+  (match config.test.stages with
+  | [ stage ] -> line "command = %s" (command_toml stage.command)
+  | _ -> ());
+  line "timeout = %s"
+    (match config.test.timeout with
+    | None -> toml_string "auto"
+    | Some duration -> string_of_float (Core.Duration.to_seconds duration));
+  line "baseline_runs = %d" (Core.Positive_int.to_int config.test.baseline_runs);
+  line "parallel_safe = %b" config.test.parallel_safe;
+  line "external_inputs = %s" (toml_strings config.test.external_inputs);
+  line "reproducible = %b" config.test.reproducible;
+  (match config.test.stages with
+  | [] | [ _ ] -> ()
+  | stages ->
+      List.iter
+        (fun stage ->
+          line "";
+          line "[[test.stages]]";
+          line "name = %s" (toml_string stage.name);
+          line "command = %s" (command_toml stage.command))
+        stages);
+  line "";
+  line "[execution]";
+  line "mode = %s" (toml_string (execution_mode_name config.execution.mode));
+  line "jobs = %d" (Core.Positive_int.to_int config.execution.jobs);
+  line "";
+  line "[cache]";
+  line "mode = %s" (toml_string (cache_mode_name config.cache.mode));
+  line "historical_reuse = %s"
+    (toml_string (historical_reuse_name config.cache.historical_reuse));
+  Option.iter
+    (fun directory -> line "directory = %s" (toml_string directory))
+    config.cache.directory;
+  line "";
+  line "[policy]";
+  line "require_complete = %b" config.policy.require_complete;
+  line "max_unexpected_survivors = %d" config.policy.max_unexpected_survivors;
+  Option.iter
+    (fun value -> line "minimum_score = %s" value)
+    (option_float config.policy.minimum_score);
+  Option.iter
+    (fun value -> line "maximum_score_drop = %s" value)
+    (option_float config.policy.maximum_score_drop);
+  line "allow_estimated = %b" config.policy.allow_estimated;
+  line "";
+  line "[report]";
+  line "formats = %s"
+    (config.report.formats |> List.map artifact_format_name |> toml_strings);
+  Option.iter
+    (fun directory -> line "directory = %s" (toml_string directory))
+    config.report.directory;
+  line "";
+  line "[privacy]";
+  line "stdout_limit_bytes = %d" config.privacy.stdout_limit_bytes;
+  line "stderr_limit_bytes = %d" config.privacy.stderr_limit_bytes;
+  line "redactions = %s" (toml_strings config.privacy.redactions);
+  line "source_embedding = %s"
+    (toml_string (source_embedding_name config.privacy.source_embedding));
+  Buffer.contents buffer
+
 let example =
-  {|# ocaml-mutants configuration v1
-version = 1
+  {|# ocaml-mutants configuration v2
+version = 2
 
 [mutation]
 profile = "balanced"
@@ -634,16 +1252,34 @@ exclude = ["**/test/**", "**/tests/**", "**/_build/**"]
 # ]
 
 [test]
+driver = "auto"
 command = ["dune", "runtest", "--force"]
-# timeout = 30.0
+timeout = "auto"
 baseline_runs = 3
 parallel_safe = false
+external_inputs = []
+reproducible = true
 
 [execution]
-jobs = 1
+mode = "strict"
+jobs = "auto"
 
 [cache]
-mode = "auto"
+historical_reuse = "off"
 # Relative paths resolve below the OS cache root, never the workspace.
 # directory = "team-cache"
+
+[policy]
+require_complete = true
+max_unexpected_survivors = 0
+allow_estimated = false
+
+[report]
+formats = ["terminal", "json"]
+
+[privacy]
+stdout_limit_bytes = 65536
+stderr_limit_bytes = 65536
+redactions = []
+source_embedding = "context"
 |}

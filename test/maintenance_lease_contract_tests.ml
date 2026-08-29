@@ -30,9 +30,18 @@ let report id : Engine.Run_store.run =
         test_command = command;
         baseline_duration = None;
         baseline_stages = [];
+        hit_map = [];
         timeout = None;
         cache_mode = "off";
+        execution_mode = "strict";
+        historical_reuse = "off";
         cache_key = "unavailable";
+        resolved_config = Engine.Config.to_yojson Engine.Config.defaults;
+        input_fingerprint = "unavailable";
+        config_digest =
+          Engine.Util.sha256
+            (Yojson.Safe.to_string ~std:true
+               (Engine.Config.to_yojson Engine.Config.defaults));
       };
     status = Engine.Run_store.Completed;
     results = [];
