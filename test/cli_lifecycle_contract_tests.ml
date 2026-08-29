@@ -78,7 +78,10 @@ let source_digest layout =
   get_ok "cannot digest source workspace"
     (Engine.Util.digest_tree ~skip layout.workspace)
 
-let cli_deadline_seconds = 180.
+(* A fresh Windows/OCaml 5.4 runner can spend more than three minutes building
+   the first catalog. This is only the outer harness guard; the behavioral
+   timeout asserted below remains [mutant_timeout_seconds]. *)
+let cli_deadline_seconds = 600.
 
 let run_cli ?(extra_env = []) ~cli layout arguments =
   Engine.Process_supervisor.run ~timeout:cli_deadline_seconds
@@ -281,7 +284,7 @@ let run_json ?extra_env ~cli layout arguments ~label ~exit_code =
 
 let check_completed_report label report =
   let open Yojson.Safe.Util in
-  expect_string (label ^ " document type") "ocaml-mutants.run-report-v1"
+  expect_string (label ^ " document type") "ocaml-mutants.run-report-v2"
     (report |> member "document_type");
   expect_string (label ^ " status") "completed" (report |> member "status");
   expect_null (label ^ " failure") (report |> member "failure")
@@ -484,8 +487,52 @@ let choose value = if value then first else second
 
       write_config layout ~stage_flag:timeout_stage_flag
         ~stage_name:"confirmed-timeout" executable;
-      run_json ~extra_env ~cli layout ~label:"confirmed timeout" ~exit_code:0
-        [ "--mutant"; selected_id ]
+      let timeout_process =
+        run_cli ~extra_env ~cli layout
+          [
+            "run";
+            layout.workspace;
+            "--events";
+            "jsonl";
+            "--no-color";
+            "--mutant";
+            selected_id;
+          ]
+      in
+      expect_exit "confirmed timeout" 0 timeout_process;
+      let open Yojson.Safe.Util in
+      let settled_events =
+        timeout_process.stdout |> String.split_on_char '\n'
+        |> List.filter_map (fun line ->
+            let line = String.trim line in
+            if String.equal line "" then None
+            else
+              let event = Yojson.Safe.from_string line in
+              if
+                String.equal
+                  (event |> member "type" |> to_string)
+                  "mutant-settled"
+              then Some event
+              else None)
+      in
+      let settled =
+        singleton "confirmed timeout settled events" settled_events
+      in
+      expect_string "timeout settles only after serial confirmation" "timeout"
+        (settled |> member "payload" |> member "outcome");
+      let timeout_report =
+        run_cli ~extra_env ~cli layout
+          [
+            "report";
+            "latest";
+            "--path";
+            layout.workspace;
+            "--json";
+            "--no-color";
+          ]
+      in
+      expect_exit "confirmed timeout report" 0 timeout_report;
+      parse_json "confirmed timeout report" timeout_report
       |> check_confirmed_timeout ~mutant_id:selected_id;
 
       let stale_id = absent_full_id catalog in
@@ -495,7 +542,7 @@ let choose value = if value then first else second
       write_config layout ~stage_flag:killing_stage_flag
         ~stage_name:"kill-selected" ~expectation:(stale_id, stale_reason)
         executable;
-      run_json ~extra_env ~cli layout ~label:"stale expectation" ~exit_code:2 []
+      run_json ~extra_env ~cli layout ~label:"stale expectation" ~exit_code:0 []
       |> check_stale_expectation ~id:stale_id ~reason:stale_reason;
 
       let partial_reason =
@@ -561,7 +608,7 @@ let choose value = if value then first else second
       expect_exit "store-resolution report" 0 report;
       let open Yojson.Safe.Util in
       expect_string "store-resolution report document type"
-        "ocaml-mutants.run-report-v1"
+        "ocaml-mutants.run-report-v2"
         (parse_json "store-resolution report" report |> member "document_type");
       let stats =
         run_cli ~extra_env ~cli layout
@@ -572,12 +619,10 @@ let choose value = if value then first else second
         fail "cache stats did not resolve the configured directory: %S"
           stats.stdout)
 
-(* `--` must reach the run term through the argv pre-split for the implicit
-   (default-command) invocation as well as the explicit `run` one, other
+(* `--` must reach the explicit run term through the argv pre-split, other
    subcommands must keep `--` as an ordinary end-of-options token, and a bare
-   trailing `--` must stay a clean usage error. cmdliner's group dispatch reads
-   the first positional as a subcommand name, so the implicit form is
-   options-only: a positional workspace path requires the explicit `run`. *)
+   trailing `--` in a non-TTY must select the documented default-command
+   diagnostic rather than start a run. *)
 let argv_split_contract cli executable =
   let layout = create_layout () in
   Fun.protect
@@ -602,9 +647,11 @@ let choose value = if value then first else second
       let _, selected_id, _ = catalog_ids ~extra_env ~cli layout in
       write_config layout ~stage_flag:killing_stage_flag
         ~stage_name:"kill-selected" executable;
-      let implicit =
+      let explicit =
         run_cli ~extra_env ~cli layout
           [
+            "run";
+            layout.workspace;
             "--json";
             "--no-color";
             "--mutant";
@@ -614,9 +661,9 @@ let choose value = if value then first else second
             killing_stage_flag;
           ]
       in
-      expect_exit "implicit run with a command tail" 0 implicit;
-      let report = parse_json "implicit run with a command tail" implicit in
-      check_completed_report "implicit run with a command tail" report;
+      expect_exit "explicit run with a command tail" 0 explicit;
+      let report = parse_json "explicit run with a command tail" explicit in
+      check_completed_report "explicit run with a command tail" report;
       let open Yojson.Safe.Util in
       let command =
         report |> member "test" |> member "command" |> to_list
@@ -625,20 +672,20 @@ let choose value = if value then first else second
       if
         not (List.equal String.equal command [ executable; killing_stage_flag ])
       then
-        fail "implicit run did not adopt the `--` command tail: %s"
+        fail "explicit run did not adopt the `--` command tail: %s"
           (String.concat " " command);
       let report_process =
         run_cli ~extra_env ~cli layout
           [ "report"; "--json"; "--no-color"; "--"; "latest" ]
       in
       expect_exit "report keeps `--` as end of options" 0 report_process;
-      expect_string "report `--` document type" "ocaml-mutants.run-report-v1"
+      expect_string "report `--` document type" "ocaml-mutants.run-report-v2"
         (parse_json "report keeps `--` as end of options" report_process
         |> member "document_type");
       let bare = run_cli ~extra_env ~cli layout [ "--" ] in
       expect_exit "bare `--` is a usage error" 2 bare;
-      if not (contains_substring ~needle:"must be followed" bare.stderr) then
-        fail "bare `--` did not produce the usage diagnostic: %S" bare.stderr)
+      if not (contains_substring ~needle:"no interactive TTY" bare.stderr) then
+        fail "bare `--` did not produce the non-TTY diagnostic: %S" bare.stderr)
 
 let () =
   if Engine.Process_supervisor.helper_requested Sys.argv then

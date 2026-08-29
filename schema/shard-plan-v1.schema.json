@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/P4suta/ocaml-mutants/schema/shard-plan-v1.schema.json",
+  "title": "ocaml-mutants shard plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["document_type", "schema_version", "plan_id", "input_fingerprint", "workspace_digest", "toolchain", "catalog_ids", "shard_count", "assignments"],
+  "properties": {
+    "document_type": { "const": "ocaml-mutants.shard-plan-v1" },
+    "schema_version": { "const": 1 },
+    "plan_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "input_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "workspace_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "toolchain": { "type": "string" },
+    "catalog_ids": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "uniqueItems": true },
+    "shard_count": { "type": "integer", "minimum": 1 },
+    "assignments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "mutant_ids", "estimated_duration_seconds"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "mutant_ids": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "uniqueItems": true },
+          "estimated_duration_seconds": { "type": "number", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

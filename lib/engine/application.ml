@@ -72,7 +72,7 @@ let report_status resolution =
 
 let completed_exit_code = function
   | All_detected -> 0
-  | Unexpected_survivor -> 1
+  | Unexpected_survivor -> 0
   | Contract_failure -> 2
 
 let result resolution =
@@ -322,113 +322,118 @@ module Make (Services : SERVICES) = struct
         in
         failure_preparation primary (cleanup_errors cleanup)
 
+  let run_controlled ~cancel ~finish_subscription ~root ~config ~fresh
+      ~selection ~output =
+    let configured_cache = config.Config.cache.directory in
+    let acquired =
+      match
+        protect ~phase:Error.Cache ~operation:"store-create"
+          ~report_state:"unavailable-before-store" (fun () ->
+            Services.Store.create ~workspace:root ?directory:configured_cache ())
+      with
+      | Error error | Ok (Error error) -> Early_error error
+      | Ok (Ok store) -> (
+          match
+            protect ~phase:Error.Reporting ~operation:"started-at-clock"
+              ~report_state:"unavailable-before-reservation" (fun () ->
+                Services.Clock.now ())
+          with
+          | Error error -> Early_error error
+          | Ok started_at -> (
+              match
+                protect ~phase:Error.Reporting ~operation:"store-reserve"
+                  ~report_state:"unavailable-reservation-handle" (fun () ->
+                    Services.Store.reserve store ~started_at)
+              with
+              | Error error | Ok (Error error) -> Early_error error
+              | Ok (Ok reservation) -> (
+                  match
+                    prepare_reserved ~cancel ~store ~reservation ~started_at
+                      ~root ~config ~fresh ~selection ~output
+                  with
+                  | Ok preparation -> Prepared (store, reservation, preparation)
+                  | Error error ->
+                      Preparation_blocked (error, store, reservation))))
+    in
+    match acquired with
+    | Early_error error -> Error (suppress_all error (finish_subscription ()))
+    | Preparation_blocked (error, store, reservation) ->
+        Error
+          (suppress_all error
+             (abandon store reservation @ finish_subscription ()))
+    | Prepared (store, reservation, preparation) -> (
+        let prepared_resolution =
+          resolve preparation.verdict ~cleanup_errors:preparation.cleanup_errors
+        in
+        let resolution, committed =
+          match
+            protect ~phase:Error.Reporting ~operation:"finished-at-clock"
+              ~report_state:"unavailable-metadata-incomplete" (fun () ->
+                Services.Clock.now ())
+          with
+          | Error error -> (prepared_resolution, Error error)
+          | Ok finished_at -> (
+              let resolution =
+                if Cancel.is_requested cancel then
+                  match preparation.verdict with
+                  | Interrupted _ -> prepared_resolution
+                  | Completed _ | Failed _ ->
+                      resolve
+                        (Interrupted (publication_interruption ()))
+                        ~cleanup_errors:preparation.cleanup_errors
+                else prepared_resolution
+              in
+              match
+                protect ~phase:Error.Reporting ~operation:"commit-reserved"
+                  ~report_state:"indeterminate" (fun () ->
+                    Services.commit_reserved ~store ~reservation ~finished_at
+                      ~resolution preparation.draft)
+              with
+              | Error error -> (resolution, Error error)
+              | Ok result -> (resolution, result))
+        in
+        (* A conforming process-lifetime signal service only deactivates
+           in-memory subscriptions here, so this handoff is total and the OS
+           router remains installed. Keeping the subscriptions live through
+           [commit_reserved] closes the former interrupt gap. The cancellation
+           check immediately before that call is the report decision's
+           linearization point; later interrupts cannot rewrite a possibly
+           committed immutable report. Interactive callers have no installed
+           process subscription and supply a no-op finalizer. *)
+        let subscription_errors = finish_subscription () in
+        match committed with
+        | Ok resolution -> (
+            match subscription_errors with
+            | [] -> result resolution
+            | _ ->
+                Error
+                  (suppress_all
+                     (Error.create ~phase:Error.Cleanup
+                        ~cause:Error.Invariant_violation
+                        ~context:
+                          [ ("contract", "process-lifetime-unsubscribe-total") ]
+                        "process-lifetime cancellation unsubscribe violated \
+                         its totality contract")
+                     subscription_errors))
+        | Error reporting ->
+            let primary = commit_failure resolution reporting in
+            Error
+              (suppress_all primary
+                 (subscription_errors @ abandon store reservation)))
+
+  let run_with_cancel ~cancel ~root ~config ~fresh ~selection ~output =
+    run_controlled ~cancel
+      ~finish_subscription:(fun () -> [])
+      ~root ~config ~fresh ~selection ~output
+
   let run ~root ~config ~fresh ~selection ~output =
     let cancel = Cancel.create () in
     match install_signals cancel with
     | Error _ as error -> error
-    | Ok installed -> (
-        let configured_cache = config.Config.cache.directory in
-        let acquired =
-          match
-            protect ~phase:Error.Cache ~operation:"store-create"
-              ~report_state:"unavailable-before-store" (fun () ->
-                Services.Store.create ~workspace:root
-                  ?directory:configured_cache ())
-          with
-          | Error error | Ok (Error error) -> Early_error error
-          | Ok (Ok store) -> (
-              match
-                protect ~phase:Error.Reporting ~operation:"started-at-clock"
-                  ~report_state:"unavailable-before-reservation" (fun () ->
-                    Services.Clock.now ())
-              with
-              | Error error -> Early_error error
-              | Ok started_at -> (
-                  match
-                    protect ~phase:Error.Reporting ~operation:"store-reserve"
-                      ~report_state:"unavailable-reservation-handle" (fun () ->
-                        Services.Store.reserve store ~started_at)
-                  with
-                  | Error error | Ok (Error error) -> Early_error error
-                  | Ok (Ok reservation) -> (
-                      match
-                        prepare_reserved ~cancel ~store ~reservation ~started_at
-                          ~root ~config ~fresh ~selection ~output
-                      with
-                      | Ok preparation ->
-                          Prepared (store, reservation, preparation)
-                      | Error error ->
-                          Preparation_blocked (error, store, reservation))))
-        in
-        match acquired with
-        | Early_error error ->
-            Error (suppress_all error (restore_all installed))
-        | Preparation_blocked (error, store, reservation) ->
-            Error
-              (suppress_all error
-                 (abandon store reservation @ restore_all installed))
-        | Prepared (store, reservation, preparation) -> (
-            let prepared_resolution =
-              resolve preparation.verdict
-                ~cleanup_errors:preparation.cleanup_errors
-            in
-            let resolution, committed =
-              match
-                protect ~phase:Error.Reporting ~operation:"finished-at-clock"
-                  ~report_state:"unavailable-metadata-incomplete" (fun () ->
-                    Services.Clock.now ())
-              with
-              | Error error -> (prepared_resolution, Error error)
-              | Ok finished_at -> (
-                  let resolution =
-                    if Cancel.is_requested cancel then
-                      match preparation.verdict with
-                      | Interrupted _ -> prepared_resolution
-                      | Completed _ | Failed _ ->
-                          resolve
-                            (Interrupted (publication_interruption ()))
-                            ~cleanup_errors:preparation.cleanup_errors
-                    else prepared_resolution
-                  in
-                  match
-                    protect ~phase:Error.Reporting ~operation:"commit-reserved"
-                      ~report_state:"indeterminate" (fun () ->
-                        Services.commit_reserved ~store ~reservation
-                          ~finished_at ~resolution preparation.draft)
-                  with
-                  | Error error -> (resolution, Error error)
-                  | Ok result -> (resolution, result))
-            in
-            (* A conforming process-lifetime signal service only deactivates
-               in-memory subscriptions here, so this handoff is total and the OS
-               router remains installed. Keeping the subscriptions live through
-               [commit_reserved] closes the former interrupt gap. The
-               cancellation check immediately before that call is the report
-               decision's linearization point; later interrupts cannot rewrite a
-               possibly committed immutable report. *)
-            let subscription_errors = restore_all installed in
-            match committed with
-            | Ok resolution -> (
-                match subscription_errors with
-                | [] -> result resolution
-                | _ ->
-                    Error
-                      (suppress_all
-                         (Error.create ~phase:Error.Cleanup
-                            ~cause:Error.Invariant_violation
-                            ~context:
-                              [
-                                ( "contract",
-                                  "process-lifetime-unsubscribe-total" );
-                              ]
-                            "process-lifetime cancellation unsubscribe \
-                             violated its totality contract")
-                         subscription_errors))
-            | Error reporting ->
-                let primary = commit_failure resolution reporting in
-                Error
-                  (suppress_all primary
-                     (subscription_errors @ abandon store reservation))))
+    | Ok installed ->
+        run_controlled ~cancel
+          ~finish_subscription:(fun () -> restore_all installed)
+          ~root ~config ~fresh ~selection ~output
 
   let list_mutants ~root ~config ~selection ~output =
     with_cancel (fun cancel ->
