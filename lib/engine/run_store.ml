@@ -4069,9 +4069,11 @@ let checkpoint_mutant (journal : journal) result =
               in
               if existing = Some contents then Ok ()
               else if
-                Option.exists
-                  (valid_checkpoint_for journal ~expected:result.mutant)
-                  existing
+                match existing with
+                | Some contents ->
+                    valid_checkpoint_for journal ~expected:result.mutant
+                      contents
+                | None -> false
               then
                 Error
                   (journal_error
