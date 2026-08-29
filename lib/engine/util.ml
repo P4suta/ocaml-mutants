@@ -56,8 +56,12 @@ let rec mkdir_p path =
         Unix.mkdir native_path 0o755;
         Ok ()
       with
-      | Unix.Unix_error (Unix.EEXIST, _, _) when Sys.is_directory native_path ->
-          Ok ()
+      | Unix.Unix_error (Unix.EEXIST, _, _) -> (
+          match Sys.is_directory native_path with
+          | true -> Ok ()
+          | false ->
+              Error (Printf.sprintf "%s exists and is not a directory" path)
+          | exception Sys_error message -> Error message)
       | Unix.Unix_error (error, function_name, argument) ->
           Error
             (Printf.sprintf "%s(%s): %s" function_name argument
