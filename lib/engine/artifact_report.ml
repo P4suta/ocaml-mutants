@@ -1,14 +1,24 @@
 module Core = Ocaml_mutants_core
 
-type format = Terminal | Native_json | Html | Markdown | Sarif | Stryker
+type format =
+  | Terminal
+  | Native_json
+  | Html
+  | Markdown
+  | Sarif
+  | Stryker of Stryker_report.thresholds
 
-let of_string = function
+let of_string ?stryker_thresholds = function
   | "terminal" -> Ok Terminal
   | "json" | "native-json" -> Ok Native_json
   | "html" -> Ok Html
   | "markdown" | "md" -> Ok Markdown
   | "sarif" -> Ok Sarif
-  | "stryker" | "stryker-json" -> Ok Stryker
+  | "stryker" | "stryker-json" -> (
+      match stryker_thresholds with
+      | Some thresholds -> Ok (Stryker thresholds)
+      | None -> Error "Stryker output requires explicit high and low thresholds"
+      )
   | value ->
       Error
         (Printf.sprintf
@@ -22,11 +32,11 @@ let name = function
   | Html -> "html"
   | Markdown -> "markdown"
   | Sarif -> "sarif"
-  | Stryker -> "stryker"
+  | Stryker _ -> "stryker"
 
 let extension = function
   | Terminal -> "txt"
-  | Native_json | Sarif | Stryker -> "json"
+  | Native_json | Sarif | Stryker _ -> "json"
   | Html -> "html"
   | Markdown -> "md"
 
@@ -370,22 +380,15 @@ let projection_error error =
   Error.create ~phase:Error.Reporting ~cause:Error.Invariant_violation
     "cannot render Stryker projection: %a" Stryker_report.pp_error error
 
-let render ~root ~color ?stryker_thresholds format run =
+let render ~root ~color format run =
   match format with
   | Terminal -> Ok (Format.asprintf "%a" (Report.print_run ~color) run)
   | Native_json -> Ok (Run_store.run_to_string run)
   | Html -> html ~root run
   | Markdown -> Ok (markdown run)
   | Sarif -> Ok (sarif run)
-  | Stryker -> (
-      match stryker_thresholds with
-      | None ->
-          Error
-            (Error.create ~phase:Error.Reporting ~cause:Error.Invalid_input
-               "Stryker output requires explicit high and low thresholds")
-      | Some thresholds ->
-          Stryker_report.to_string ~thresholds
-            ~read_source:(fun ~path ->
-              Util.read_file (Filename.concat root path))
-            run
-          |> Result.map_error projection_error)
+  | Stryker thresholds ->
+      Stryker_report.to_string ~thresholds
+        ~read_source:(fun ~path -> Util.read_file (Filename.concat root path))
+        run
+      |> Result.map_error projection_error

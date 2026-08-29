@@ -72,6 +72,7 @@ let result ?(origin = Engine.Run_store.Execution) ?expected_reason mutant
 
 let metadata ?(selection = "all") ?(config = Engine.Config.defaults) nonce :
     Engine.Run_store.metadata =
+  let resolved_config, config_digest = Fixtures.config_evidence config in
   {
     id = get_ok (Core.Run_id.create ~started_at:"20260101T000000Z" ~nonce);
     started_at = "2026-01-01T00:00:00Z";
@@ -89,11 +90,9 @@ let metadata ?(selection = "all") ?(config = Engine.Config.defaults) nonce :
     execution_mode = "strict";
     historical_reuse = "off";
     cache_key = String.make 64 'b';
-    resolved_config = Engine.Config.to_yojson config;
+    resolved_config;
     input_fingerprint = String.make 64 'b';
-    config_digest =
-      Engine.Util.sha256
-        (Yojson.Safe.to_string ~std:true (Engine.Config.to_yojson config));
+    config_digest;
   }
 
 let run ?(status = Engine.Run_store.Completed)
@@ -103,6 +102,12 @@ let run ?(status = Engine.Run_store.Completed)
     metadata = metadata ?config nonce;
     status;
     results;
+    checkpointed =
+      List.fold_left
+        (fun count result ->
+          if Engine.Run_store.checkpointable_result result then count + 1
+          else count)
+        0 results;
     completeness;
     expectations;
     skipped = [];
@@ -243,6 +248,22 @@ let test_event_contract () =
   match List.rev !observed with
   | [ Engine.Event_bus.Run_started _; Engine.Event_bus.Run_finished _ ] -> ()
   | events -> Alcotest.failf "callback observed %d events" (List.length events)
+
+let test_event_callback_can_emit_reentrantly () =
+  let observed = ref [] in
+  Engine.Event_bus.with_sink
+    (Engine.Event_bus.callback (fun event ->
+         observed := event :: !observed;
+         match event with
+         | Engine.Event_bus.Run_started _ ->
+             Engine.Event_bus.emit
+               (Engine.Event_bus.Warning
+                  { code = "nested"; message = "reentrant" })
+         | _ -> ()))
+    (fun () ->
+      Engine.Event_bus.emit (Engine.Event_bus.Run_started { run_id = "run" }));
+  Alcotest.(check int)
+    "reentrant callback receives both events" 2 (List.length !observed)
 
 let catalog_and_mutants () =
   let mutants = List.map mutant_at [ 0; 5; 10; 15 ] in
@@ -394,9 +415,26 @@ let test_journal_resume () =
       Alcotest.(check bool)
         "new journal" false
         (Engine.Run_store.journal_resumed journal);
-      get_ok_engine
+      let settled = result mutant Core.Outcome.Killed in
+      get_ok_engine (Engine.Run_store.checkpoint_mutant journal settled);
+      let checkpoint_name =
+        Core.Mutant.Id.full (Core.Mutant.id mutant) ^ ".json"
+      in
+      let checkpoint_path =
+        Engine.Util.files_recursive cache
+        |> List.filter (fun relative ->
+            String.equal (Filename.basename relative) checkpoint_name)
+        |> function
+        | [ relative ] -> Filename.concat cache relative
+        | paths ->
+            Alcotest.failf "expected one checkpoint path, got %d"
+              (List.length paths)
+      in
+      get_ok (Engine.Util.write_file checkpoint_path "{corrupt");
+      get_ok_engine (Engine.Run_store.checkpoint_mutant journal settled);
+      check_error "valid immutable checkpoint conflicts"
         (Engine.Run_store.checkpoint_mutant journal
-           (result mutant Core.Outcome.Killed));
+           { settled with outcome = Core.Outcome.Survived });
       let estimated_mutant = mutant_at 5 in
       let estimated =
         result ~origin:Engine.Run_store.Fast_estimated estimated_mutant
@@ -709,10 +747,10 @@ let test_tui_model_and_html_safety () =
   let refreshed =
     Engine.Tui.update_model
       (Engine.Tui.Live_finished
-         { exit_code = 0; runs = Some [ older; evidence ]; error = None })
+         { exit_code = 0; runs = Some [ evidence; older ]; error = None })
       live
   in
-  Alcotest.(check int) "finished run reselected by id" 1 refreshed.history_index;
+  Alcotest.(check int) "finished run reselected by id" 0 refreshed.history_index;
   Alcotest.(check string)
     "finished run is authoritative report" evidence_id
     (match refreshed.run with
@@ -832,23 +870,52 @@ let test_tui_history_isolates_corrupt_reports () =
 
 let test_long_path_io () =
   with_owned_temp "ocaml-mutants-long-path-" (fun root ->
-      let component character = String.make 64 character in
-      let directory =
-        Filename.concat root (component 'a') |> fun path ->
-        Filename.concat path (component 'b')
+      let rec deepen directory depth =
+        let file = Filename.concat directory "proof.json" in
+        if String.length file > 260 then (directory, file)
+        else if depth = 8 then
+          Alcotest.fail "could not construct a bounded path beyond MAX_PATH"
+        else
+          deepen
+            (Filename.concat directory
+               (Printf.sprintf "%02d-%s" depth (String.make 60 'a')))
+            (depth + 1)
       in
+      let directory, file = deepen root 0 in
       get_ok (Engine.Util.mkdir_p directory);
-      let file = Filename.concat directory (component 'c' ^ ".json") in
       get_ok (Engine.Util.write_file file "proof");
       Alcotest.(check bool)
         "path exceeds MAX_PATH" true
-        ((not Sys.win32) || String.length file > 260);
+        (String.length file > 260);
       Alcotest.(check (result string string))
         "extended read" (Ok "proof")
         (Engine.Util.read_file file);
       Alcotest.(check int)
         "recursive enumeration" 1
-        (List.length (Engine.Util.files_recursive root)))
+        (List.length (Engine.Util.files_recursive root));
+      if Sys.win32 then
+        let dotted =
+          Filename.concat root
+            (Filename.concat "discarded" (Filename.concat ".." "normalized"))
+        in
+        let extended = Engine.Util.windows_extended_path dotted in
+        Alcotest.(check bool)
+          "extended paths contain no parent traversal" false
+          (contains ~needle:"\\..\\" extended))
+
+let test_revert_rejects_nonregular_source () =
+  with_owned_temp "ocaml-mutants-revert-guard-" (fun root ->
+      let library = Filename.concat root "lib" in
+      Unix.mkdir library 0o700;
+      let target = Filename.concat library "subject.ml" in
+      get_ok (Engine.Util.write_file target "true true true true");
+      let mutant = mutant_at 0 in
+      get_ok_engine (Engine.Mutant_workflow.apply ~root mutant);
+      Sys.remove target;
+      Unix.mkdir target 0o700;
+      check_error "revert rejects a non-regular source"
+        (Engine.Mutant_workflow.revert ~root
+           ~id:(Core.Mutant.Id.full (Core.Mutant.id mutant))))
 
 let () =
   Alcotest.run "ocaml-mutants 1.0 contracts"
@@ -862,6 +929,8 @@ let () =
         [
           Alcotest.test_case "versioned event and sink" `Quick
             test_event_contract;
+          Alcotest.test_case "callback emission is reentrant" `Quick
+            test_event_callback_can_emit_reentrantly;
           Alcotest.test_case "plain progress is rate limited" `Quick
             test_plain_event_rate_limit;
         ] );
@@ -887,4 +956,9 @@ let () =
         ] );
       ( "windows-path",
         [ Alcotest.test_case "extended I/O" `Quick test_long_path_io ] );
+      ( "mutant-workflow",
+        [
+          Alcotest.test_case "revert rejects non-regular source" `Quick
+            test_revert_rejects_nonregular_source;
+        ] );
     ]

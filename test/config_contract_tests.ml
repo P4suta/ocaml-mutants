@@ -16,10 +16,9 @@ let expect_diagnostics ~name text fragments =
   | Error diagnostics ->
       List.iter
         (fun fragment ->
-          Alcotest.(check bool)
-            (Printf.sprintf "%s includes %S" name fragment)
-            true
-            (contains diagnostics fragment))
+          if not (contains diagnostics fragment) then
+            Alcotest.failf "%s is missing %S; diagnostics:\n%s" name fragment
+              diagnostics)
         fragments
 
 let test_nested_unknown_keys () =
@@ -50,6 +49,9 @@ let test_duplicate_rows () =
   let text =
     Printf.sprintf
       {|version = 1
+[mutation]
+operators = ["comparison", "comparison"]
+
 [[mutation.expect]]
 id = %S
 reason = "first proof"
@@ -70,6 +72,7 @@ command = ["dune", "runtest"]
   in
   expect_diagnostics ~name:"duplicates" text
     [
+      "mutation.operators.1: duplicate mutation operator";
       "mutation.expect.1.id: duplicate expectation mutant ID";
       "test.stages.1.name: duplicate test stage name";
     ]
@@ -132,9 +135,63 @@ let test_v2_canonical_round_trip () =
         (loaded.origin = Engine.Config.Version_2);
       Alcotest.(check (list string))
         "v2 has no migration warning" [] loaded.warnings;
+      Alcotest.(check (list string))
+        "single noncanonical stage name is preserved"
+        (List.map
+           (fun (stage : Engine.Config.stage) -> stage.name)
+           Engine.Config.defaults.test.stages)
+        (List.map
+           (fun (stage : Engine.Config.stage) -> stage.name)
+           loaded.config.test.stages);
       Alcotest.(check string)
         "canonical round trip" encoded
         (Engine.Config.to_toml loaded.config)
+
+let test_v2_integral_float_and_stage_round_trip () =
+  let timeout =
+    match Ocaml_mutants_core.Duration.of_seconds 60. with
+    | Ok timeout -> timeout
+    | Error message -> Alcotest.fail message
+  in
+  let stage =
+    {
+      Engine.Config.name = "named-stage";
+      command = Engine.Config.defaults.test.command;
+    }
+  in
+  let config =
+    {
+      Engine.Config.defaults with
+      test =
+        {
+          Engine.Config.defaults.test with
+          stages = [ stage ];
+          timeout = Some timeout;
+        };
+      policy =
+        {
+          Engine.Config.defaults.policy with
+          minimum_score = Some 60.;
+          maximum_score_drop = Some 10.;
+        };
+    }
+  in
+  let encoded = Engine.Config.to_toml config in
+  Alcotest.(check bool)
+    "integral floats are valid TOML floats" true
+    (contains encoded "timeout = 60.0"
+    && contains encoded "minimum_score = 60.0"
+    && contains encoded "maximum_score_drop = 10.0");
+  Alcotest.(check bool)
+    "noncanonical stage uses an explicit table" true
+    (contains encoded "[[test.stages]]"
+    && contains encoded "name = \"named-stage\"");
+  match Engine.Config.parse ~file:"integral-float-v2.toml" encoded with
+  | Error diagnostics -> Alcotest.fail diagnostics
+  | Ok loaded ->
+      Alcotest.(check string)
+        "integral float and stage round trip" encoded
+        (Engine.Config.to_toml loaded)
 
 let test_v2_cache_mode_round_trip () =
   let config =
@@ -237,6 +294,8 @@ let () =
             test_example_matches_defaults;
           Alcotest.test_case "canonical v2 round trip" `Quick
             test_v2_canonical_round_trip;
+          Alcotest.test_case "integral float and named stage round trip" `Quick
+            test_v2_integral_float_and_stage_round_trip;
           Alcotest.test_case "v2 cache mode round trip" `Quick
             test_v2_cache_mode_round_trip;
           Alcotest.test_case "v1 normalization warning" `Quick

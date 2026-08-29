@@ -20,6 +20,9 @@ let command =
   | Error message -> failwith message
 
 let report id : Engine.Run_store.run =
+  let resolved_config, config_digest =
+    Fixtures.config_evidence Engine.Config.defaults
+  in
   {
     metadata =
       {
@@ -39,15 +42,13 @@ let report id : Engine.Run_store.run =
         execution_mode = "strict";
         historical_reuse = "off";
         cache_key = "unavailable";
-        resolved_config = Engine.Config.to_yojson Engine.Config.defaults;
+        resolved_config;
         input_fingerprint = "unavailable";
-        config_digest =
-          Engine.Util.sha256
-            (Yojson.Safe.to_string ~std:true
-               (Engine.Config.to_yojson Engine.Config.defaults));
+        config_digest;
       };
     status = Engine.Run_store.Completed;
     results = [];
+    checkpointed = 0;
     completeness = Engine.Run_store.Complete;
     expectations = [];
     skipped = [];

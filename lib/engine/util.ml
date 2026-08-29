@@ -4,15 +4,25 @@ let protect f = try Ok (f ()) with Sys_error message -> Error message
 let windows_extended_path path =
   if not Sys.win32 then path
   else
+    let path =
+      if String.starts_with ~prefix:"\\\\?\\UNC\\" path then
+        "\\\\" ^ String.sub path 8 (String.length path - 8)
+      else if String.starts_with ~prefix:"\\\\?\\" path then
+        String.sub path 4 (String.length path - 4)
+      else path
+    in
     let absolute =
       if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
       else path
     in
     let absolute =
-      String.map (function '/' -> '\\' | character -> character) absolute
+      String.map (function '\\' -> '/' | character -> character) absolute
+      |> Fpath.of_string |> Result.map Fpath.normalize
+      |> Result.map Fpath.to_string
+      |> Result.value ~default:absolute
+      |> String.map (function '/' -> '\\' | character -> character)
     in
-    if String.starts_with ~prefix:"\\\\?\\" absolute then absolute
-    else if String.starts_with ~prefix:"\\\\" absolute then
+    if String.starts_with ~prefix:"\\\\" absolute then
       "\\\\?\\UNC\\" ^ String.sub absolute 2 (String.length absolute - 2)
     else "\\\\?\\" ^ absolute
 
@@ -34,22 +44,25 @@ let write_file path contents =
 
 let rec mkdir_p path =
   if path = "" || path = "." then Ok ()
-  else if Sys.file_exists path then
-    if Sys.is_directory path then Ok ()
-    else Error (Printf.sprintf "%s exists and is not a directory" path)
   else
-    let parent = Filename.dirname path in
-    let* () = if String.equal parent path then Ok () else mkdir_p parent in
-    try
-      Unix.mkdir path 0o755;
-      Ok ()
-    with
-    | Unix.Unix_error (Unix.EEXIST, _, _) when Sys.is_directory path -> Ok ()
-    | Unix.Unix_error (error, function_name, argument) ->
-        Error
-          (Printf.sprintf "%s(%s): %s" function_name argument
-             (Unix.error_message error))
-    | Sys_error message -> Error message
+    let native_path = windows_extended_path path in
+    if Sys.file_exists native_path then
+      if Sys.is_directory native_path then Ok ()
+      else Error (Printf.sprintf "%s exists and is not a directory" path)
+    else
+      let parent = Filename.dirname path in
+      let* () = if String.equal parent path then Ok () else mkdir_p parent in
+      try
+        Unix.mkdir native_path 0o755;
+        Ok ()
+      with
+      | Unix.Unix_error (Unix.EEXIST, _, _) when Sys.is_directory native_path ->
+          Ok ()
+      | Unix.Unix_error (error, function_name, argument) ->
+          Error
+            (Printf.sprintf "%s(%s): %s" function_name argument
+               (Unix.error_message error))
+      | Sys_error message -> Error message
 
 external atomic_replace : string -> string -> bool
   = "ocaml_mutants_atomic_replace"

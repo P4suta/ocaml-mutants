@@ -18,31 +18,31 @@ type event =
   | Run_finished of { exit_code : int }
 
 type plain_state = { channel : out_channel; mutable last_progress_at : float }
+type jsonl_state = { channel : out_channel; mutable sequence : int }
 
 type sink =
   | Silent
   | Plain of plain_state
-  | Jsonl of out_channel
+  | Jsonl of jsonl_state
   | Callback of (event -> unit)
 
 let plain channel = Plain { channel; last_progress_at = neg_infinity }
-let jsonl channel = Jsonl channel
+let jsonl channel = Jsonl { channel; sequence = 0 }
 let silent = Silent
 let callback consumer = Callback consumer
-let mutex = Mutex.create ()
+let state_mutex = Mutex.create ()
+let output_mutex = Mutex.create ()
 let current = ref (plain stderr)
-let sequence = ref 0
 
 let with_sink sink action =
-  Mutex.lock mutex;
+  Mutex.lock state_mutex;
   let previous = !current in
   current := sink;
-  sequence := 0;
-  Mutex.unlock mutex;
+  Mutex.unlock state_mutex;
   Fun.protect action ~finally:(fun () ->
-      Mutex.lock mutex;
+      Mutex.lock state_mutex;
       current := previous;
-      Mutex.unlock mutex)
+      Mutex.unlock state_mutex)
 
 let option_float = function None -> `Null | Some value -> `Float value
 
@@ -114,7 +114,7 @@ let to_yojson ~sequence ~timestamp event =
       ("payload", payload);
     ]
 
-let print_plain state = function
+let print_plain (state : plain_state) = function
   | Run_started { run_id } ->
       Printf.fprintf state.channel "ocaml-mutants: run %s started\n%!" run_id
   | Phase_started { phase; total = None } ->
@@ -146,17 +146,18 @@ let print_plain state = function
         exit_code
 
 let emit event =
-  Mutex.protect mutex (fun () ->
-      let sink = !current in
-      match sink with
-      | Silent -> ()
-      | Callback consumer -> consumer event
-      | Plain state -> print_plain state event
-      | Jsonl channel ->
-          let current_sequence = !sequence in
-          incr sequence;
-          Yojson.Safe.to_channel channel
+  let sink = Mutex.protect state_mutex (fun () -> !current) in
+  match sink with
+  | Silent -> ()
+  | Callback consumer -> consumer event
+  | Plain state ->
+      Mutex.protect output_mutex (fun () -> print_plain state event)
+  | Jsonl state ->
+      Mutex.protect output_mutex (fun () ->
+          let current_sequence = state.sequence in
+          state.sequence <- state.sequence + 1;
+          Yojson.Safe.to_channel state.channel
             (to_yojson ~sequence:current_sequence ~timestamp:(Util.timestamp ())
                event);
-          output_char channel '\n';
-          flush channel)
+          output_char state.channel '\n';
+          flush state.channel)

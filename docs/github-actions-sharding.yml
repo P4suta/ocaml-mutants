@@ -17,7 +17,8 @@ jobs:
         with: { name: plan, path: plan.json }
   run:
     needs: plan
-    strategy: { matrix: ${{ fromJSON(needs.plan.outputs.matrix) }} }
+    strategy:
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +30,9 @@ jobs:
       - run: ocaml-mutants run --shard-plan plan.json --shard ${{ matrix.shard }} --quiet
       - run: ocaml-mutants report --format json --output shard-${{ matrix.shard }}.json
       - uses: actions/upload-artifact@v4
-        with: { name: shard-${{ matrix.shard }}, path: shard-${{ matrix.shard }}.json }
+        with:
+          name: shard-${{ matrix.shard }}
+          path: shard-${{ matrix.shard }}.json
   merge:
     needs: run
     runs-on: ubuntu-latest

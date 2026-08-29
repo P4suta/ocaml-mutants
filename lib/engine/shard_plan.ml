@@ -21,6 +21,12 @@ let framed values =
   |> List.map (fun value -> Printf.sprintf "%d:%s" (String.length value) value)
   |> String.concat ""
 
+let valid_digest value =
+  String.length value = 64
+  && String.for_all
+       (function '0' .. '9' | 'a' .. 'f' -> true | _ -> false)
+       value
+
 let fingerprint_ids ~workspace_digest ~toolchain ~config ~catalog_ids =
   sha256
     (framed
@@ -247,6 +253,14 @@ let of_yojson json =
       in
       if shard_count < 1 || shard_count <> List.length assignments then
         Error "shard_count contradicts assignments"
+      else if
+        not
+          (valid_digest plan.plan_id
+          && valid_digest plan.input_fingerprint
+          && valid_digest plan.workspace_digest
+          && List.for_all valid_digest plan.catalog_ids
+          && List.for_all valid_digest assigned)
+      then Error "shard plan contains an invalid digest or mutant ID"
       else if indexes <> List.init shard_count Fun.id then
         Error "shard assignment indexes are not canonical"
       else if List.sort_uniq String.compare assigned <> plan.catalog_ids then
@@ -374,6 +388,10 @@ let merge ~plan ~id ~finished_at runs =
               };
             status = Run_store.Completed;
             results;
+            checkpointed =
+              List.fold_left
+                (fun count run -> count + run.Run_store.checkpointed)
+                0 runs;
             completeness = Run_store.Complete;
             expectations = merge_expectations runs;
             skipped = first.skipped;

@@ -121,6 +121,8 @@ module Make (Process : PROCESS) = struct
           Process.run ~cancel ~cwd:root
             ~env:
               (("OCAML_MUTANTS_ACTIVE", None)
+              :: ("OCAML_MUTANTS_HIT_FILE", None)
+              :: (Core.Instrumentation.hit_owner_environment, None)
               :: Test_command.dune_cache_environment ~root)
             (test_command stage.Config.command
                (Printf.sprintf "%s-stage-%d" build_dir stage_index))

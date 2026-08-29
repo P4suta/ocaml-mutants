@@ -395,6 +395,30 @@ let check_custom_command ~cli fixture_project =
     fail "custom-command report retained a configured privacy literal";
   if not (contains_substring ~needle:"**************" process.stdout) then
     fail "custom-command report did not retain redaction evidence";
+  let dash_output = Filename.concat fixture "-" in
+  if Sys.file_exists dash_output then
+    fail "custom-command fixture already contains a '-' output path";
+  let multiple_stdout =
+    Process_supervisor.run ~timeout:30. ~cwd:fixture ~env:store_env
+      [
+        cli;
+        "report";
+        ".";
+        "--format";
+        "json";
+        "--format";
+        "markdown";
+        "--output";
+        "-";
+      ]
+  in
+  (match multiple_stdout.status with
+  | Process_supervisor.Exited 2 -> ()
+  | _ ->
+      fail "multiple report formats accepted --output - (%s)"
+        (Process_supervisor.status_string multiple_stdout.status));
+  if Sys.file_exists dash_output then
+    fail "multiple report formats created a '-' directory";
   let after =
     match Util.digest_tree ~skip:Workspace_snapshot.default_skip fixture with
     | Ok value -> value
@@ -634,23 +658,23 @@ let run () =
   List.iter (check_list ~cli) fixtures;
   fixtures
   |> List.find_opt (fun project ->
-      Filename.basename (Filename.dirname project) = "custom-command")
+      Filename.basename (fixture_root project) = "custom-command")
   |> Option.iter (check_custom_command ~cli);
   fixtures
   |> List.find_opt (fun project ->
-      Filename.basename (Filename.dirname project) = "timeout")
+      Filename.basename (fixture_root project) = "timeout")
   |> Option.iter (check_timeout ~cli);
   fixtures
   |> List.find_opt (fun project ->
-      Filename.basename (Filename.dirname project) = "baseline-failure")
+      Filename.basename (fixture_root project) = "baseline-failure")
   |> Option.iter (check_baseline_failure ~cli);
   fixtures
   |> List.find_opt (fun project ->
-      Filename.basename (Filename.dirname project) = "match")
+      Filename.basename (fixture_root project) = "match")
   |> Option.iter (check_match_run ~cli);
   fixtures
   |> List.find_opt (fun project ->
-      Filename.basename (Filename.dirname project) = "basic")
+      Filename.basename (fixture_root project) = "basic")
   |> Option.iter (check_dirty_git_workspace ~cli)
 
 let () =

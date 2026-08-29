@@ -90,7 +90,7 @@ def run(command, cwd, env, accepted_returncodes=(0,)):
             f"command failed ({completed.returncode}): {' '.join(command)}\n"
             f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
         )
-    return json.loads(completed.stdout)
+    return json.loads(completed.stdout), completed.returncode
 
 
 def run_jsonl(command, cwd, env):
@@ -200,10 +200,13 @@ def main():
         env = os.environ.copy()
         env["LOCALAPPDATA"] = cache
         env["XDG_CACHE_HOME"] = cache
-        catalog = run([cli, "list", "--json", "--no-color"], fixture, env)
+        catalog, catalog_exit = run(
+            [cli, "list", "--json", "--no-color"], fixture, env
+        )
+        assert catalog_exit == 0
         catalog_validator.validate(catalog)
 
-        report = run(
+        report, report_exit = run(
             [
                 cli,
                 "run",
@@ -222,6 +225,7 @@ def main():
             fixture,
             env,
         )
+        assert report_exit == 0
         report_validator.validate(report)
         summary = report["summary"]
         assert summary["total"] == summary["executed"] + summary["not_run"]
@@ -235,7 +239,7 @@ def main():
             derived = 100.0 * summary["detected"] / scoreable
             assert abs(summary["score"] - derived) < 1e-9
 
-        check = run(
+        check, check_exit = run(
             [cli, "check", "--json"],
             fixture,
             env,
@@ -249,8 +253,10 @@ def main():
         else:
             expected_check_exit = 0
         assert check["exit_code"] == expected_check_exit
+        assert check_exit == expected_check_exit
 
-        plan = run([cli, "plan", "--shards", "2"], fixture, env)
+        plan, plan_exit = run([cli, "plan", "--shards", "2"], fixture, env)
+        assert plan_exit == 0
         shard_validator.validate(plan)
 
         events = run_jsonl(
@@ -277,7 +283,7 @@ def main():
             event_validator.validate(event)
             assert event["sequence"] == sequence
 
-        stryker_report = run(
+        stryker_report, stryker_exit = run(
             [
                 cli,
                 "run",
@@ -300,6 +306,7 @@ def main():
             fixture,
             env,
         )
+        assert stryker_exit == 0
         for validator in stryker_validators:
             validator.validate(stryker_report)
         paths = list(stryker_report["files"])
@@ -308,9 +315,10 @@ def main():
             mutant_ids = [mutant["id"] for mutant in file_report["mutants"]]
             assert mutant_ids == sorted(mutant_ids)
 
-        native_after_projection = run(
+        native_after_projection, native_exit = run(
             [cli, "report", "--json", "--no-color"], fixture, env
         )
+        assert native_exit == 0
         report_validator.validate(native_after_projection)
         native_ids = {
             result["mutant"]["full_id"]

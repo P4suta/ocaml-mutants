@@ -98,32 +98,40 @@ let instrument ~hit_owner ~source mutants =
              \    else Stdlib.Sys.getenv_opt \"OCAML_MUTANTS_ACTIVE\"\n\
              \  let owns_hit_file =\n\
              \    Stdlib.Sys.getenv_opt %S = Some %S\n\
-             \  let hit_file =\n\
+             \  let hit_directory =\n\
              \    if process_helper || not owns_hit_file then None\n\
              \    else Stdlib.Sys.getenv_opt \"OCAML_MUTANTS_HIT_FILE\"\n\
-             \  let hits : (string, unit) Stdlib.Hashtbl.t = \
-              Stdlib.Hashtbl.create 17\n\
-             \  let hit id =\n\
-             \    match hit_file with\n\
+             \  let hits : string list Stdlib.Atomic.t = Stdlib.Atomic.make []\n\
+             \  let rec hit id =\n\
+             \    match hit_directory with\n\
              \    | None -> ()\n\
-             \    | Some _ -> Stdlib.Hashtbl.replace hits id ()\n\
+             \    | Some _ ->\n\
+             \        let current = Stdlib.Atomic.get hits in\n\
+             \        if Stdlib.List.mem id current then ()\n\
+             \        else if\n\
+             \          not (Stdlib.Atomic.compare_and_set hits current (id :: \
+              current))\n\
+             \        then hit id\n\
              \  let flush () =\n\
-             \    match hit_file with\n\
-             \    | None -> ()\n\
-             \    | Some path ->\n\
+             \    match (hit_directory, Stdlib.Atomic.get hits) with\n\
+             \    | None, _ -> ()\n\
+             \    | Some _, [] -> ()\n\
+             \    | Some directory, recorded ->\n\
              \        (try\n\
-             \           let channel =\n\
-             \             Stdlib.open_out_gen\n\
-             \               [ Stdlib.Open_wronly; Stdlib.Open_creat; \
-              Stdlib.Open_append; Stdlib.Open_binary ]\n\
-             \               0o600 path\n\
+             \           let _, channel =\n\
+             \             Stdlib.Filename.open_temp_file\n\
+             \               ~mode:[ Stdlib.Open_binary ] ~perms:0o600\n\
+             \               ~temp_dir:directory \"hits-\" \".log\"\n\
              \           in\n\
              \           Stdlib.Fun.protect\n\
              \             ~finally:(fun () -> Stdlib.close_out_noerr channel)\n\
              \             (fun () ->\n\
-             \               Stdlib.Hashtbl.iter\n\
-             \                 (fun id () -> Stdlib.output_string channel (id \
-              ^ \"\\n\")) hits)\n\
+             \               recorded\n\
+             \               |> Stdlib.List.sort_uniq Stdlib.String.compare\n\
+             \               |> Stdlib.List.iter (fun id ->\n\
+             \                      Stdlib.output_string channel (id ^ \
+              \"\\n\"));\n\
+             \               Stdlib.flush channel)\n\
              \         with _ -> ())\n\
              \  let () = Stdlib.at_exit flush\n\
               end\n\

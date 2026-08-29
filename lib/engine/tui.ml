@@ -787,22 +787,21 @@ let windows_matrix ~color ~exit_on_ctrl_c =
   let parser = Matrix.Input.Parser.create () in
   let original_mode = ref None in
   let set_raw_mode enabled =
-    if enabled then
+    if enabled then (
       match !original_mode with
       | Some _ -> ()
-      | None -> (
+      | None ->
           if input_is_tty then
             let error, mode = windows_console_set_raw input in
             if error <> 0 then win32_failure "SetConsoleMode(input)" error
-            else original_mode := Some mode
-          else
-            match !original_mode with
-            | None -> ()
-            | Some mode ->
-                let error = windows_console_restore input mode in
-                if error <> 0 then
-                  win32_failure "RestoreConsoleMode(input)" error
-                else original_mode := None)
+            else original_mode := Some mode)
+    else
+      match !original_mode with
+      | None -> ()
+      | Some mode ->
+          let error = windows_console_restore input mode in
+          if error <> 0 then win32_failure "RestoreConsoleMode(input)" error
+          else original_mode := None
   in
   let queue = Queue.create () in
   let queue_mutex = Mutex.create () in
@@ -886,18 +885,18 @@ let posix_monochrome_matrix ~exit_on_ctrl_c =
   let parser = Matrix.Input.Parser.create () in
   let original_mode = ref None in
   let set_raw_mode enabled =
-    if enabled then
+    if enabled then (
       match !original_mode with
       | Some _ -> ()
-      | None -> (
+      | None ->
           if input_is_tty then
-            original_mode := Some (Matrix.Terminal.set_raw input)
-          else
-            match !original_mode with
-            | None -> ()
-            | Some mode ->
-                Matrix.Terminal.restore input mode;
-                original_mode := None)
+            original_mode := Some (Matrix.Terminal.set_raw input))
+    else
+      match !original_mode with
+      | None -> ()
+      | Some mode ->
+          Matrix.Terminal.restore input mode;
+          original_mode := None
   in
   let terminal_size () = Matrix.Terminal.size output in
   let last_size = ref (terminal_size ()) in
@@ -908,22 +907,21 @@ let posix_monochrome_matrix ~exit_on_ctrl_c =
       with Unix.Unix_error (Unix.EINTR, _, _) -> ([], [], [])
     in
     let on_caps event = Matrix.Terminal.apply_capability_event terminal event in
-    if readable <> [] then
-      let buffer = Bytes.create 4096 in
-      match Unix.read input buffer 0 (Bytes.length buffer) with
-      | 0 -> ()
-      | length ->
-          Matrix.Input.Parser.feed parser buffer 0 length
-            ~now:(Unix.gettimeofday ()) ~on_event ~on_caps
-      | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EINTR), _, _) ->
-          ();
-          let size = terminal_size () in
-          if size <> !last_size then (
-            last_size := size;
-            let width, height = size in
-            on_event (Matrix.Input.Resize (width, height)));
-          Matrix.Input.Parser.drain parser ~now:(Unix.gettimeofday ()) ~on_event
-            ~on_caps
+    (if readable <> [] then
+       let buffer = Bytes.create 4096 in
+       match Unix.read input buffer 0 (Bytes.length buffer) with
+       | 0 -> ()
+       | length ->
+           Matrix.Input.Parser.feed parser buffer 0 length
+             ~now:(Unix.gettimeofday ()) ~on_event ~on_caps
+       | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EINTR), _, _) -> ());
+    let size = terminal_size () in
+    if size <> !last_size then (
+      last_size := size;
+      let width, height = size in
+      on_event (Matrix.Input.Resize (width, height)));
+    Matrix.Input.Parser.drain parser ~now:(Unix.gettimeofday ()) ~on_event
+      ~on_caps
   in
   let width, height = !last_size in
   let matrix =

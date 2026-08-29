@@ -59,7 +59,7 @@ def expected_files(executable: PurePosixPath) -> set[PurePosixPath]:
         PurePosixPath(f"share/{PACKAGE}/completions/_ocaml-mutants"),
         PurePosixPath(f"share/{PACKAGE}/completions/ocaml-mutants.fish"),
         PurePosixPath(f"share/{PACKAGE}/completions/ocaml-mutants.ps1"),
-        PurePosixPath(f"man/man1/ocaml-mutants.1"),
+        PurePosixPath("man/man1/ocaml-mutants.1"),
         *{
             PurePosixPath(f"share/{PACKAGE}/docs/{name}")
             for name in (

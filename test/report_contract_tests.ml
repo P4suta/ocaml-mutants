@@ -66,6 +66,9 @@ let test_expectation_policy_is_visible () =
          ~nonce:"terminal-policy")
   in
   let command = get_ok (Core.Nonempty_argv.of_list [ "dune"; "runtest" ]) in
+  let resolved_config, config_digest =
+    Fixtures.config_evidence Engine.Config.defaults
+  in
   let run : Engine.Run_store.run =
     {
       metadata =
@@ -86,12 +89,9 @@ let test_expectation_policy_is_visible () =
           execution_mode = "strict";
           historical_reuse = "off";
           cache_key = "unavailable";
-          resolved_config = Engine.Config.to_yojson Engine.Config.defaults;
+          resolved_config;
           input_fingerprint = "unavailable";
-          config_digest =
-            Engine.Util.sha256
-              (Yojson.Safe.to_string ~std:true
-                 (Engine.Config.to_yojson Engine.Config.defaults));
+          config_digest;
         };
       status = Engine.Run_store.Completed;
       results =
@@ -101,6 +101,7 @@ let test_expectation_policy_is_visible () =
           result ~expected_reason:(Some "must remain equivalent") unfulfilled
             Core.Outcome.Killed;
         ];
+      checkpointed = 2;
       completeness = Engine.Run_store.Complete;
       expectations =
         [

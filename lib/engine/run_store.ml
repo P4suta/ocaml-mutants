@@ -149,6 +149,7 @@ type run = {
   metadata : metadata;
   status : run_status;
   results : mutant_result list;
+  checkpointed : int;
   completeness : completeness;
   expectations : expectation_evaluation list;
   skipped : skip_summary list;
@@ -2791,7 +2792,7 @@ let run_to_yojson (run : run) =
             ("executed", `Int executed_evidence);
             ("exact_cache", `Int exact_cache_evidence);
             ("estimated", `Int estimated_evidence);
-            ("checkpointed", `Int (List.length run.results));
+            ("checkpointed", `Int run.checkpointed);
             ("resumed", `Int resumed_evidence);
           ] );
       ( "mutants",
@@ -3072,6 +3073,27 @@ let validate_summary encoded run =
       else Error (Printf.sprintf "summary.%s contradicts report data" field))
     (Ok ()) fields
 
+let validate_evidence encoded run =
+  let open Yojson.Safe.Util in
+  let expected = run_to_yojson run |> member "evidence" in
+  let fields =
+    [
+      "level";
+      "complete";
+      "executed";
+      "exact_cache";
+      "estimated";
+      "checkpointed";
+      "resumed";
+    ]
+  in
+  List.fold_left
+    (fun validation field ->
+      let* () = validation in
+      if member field encoded = member field expected then Ok ()
+      else Error (Printf.sprintf "evidence.%s contradicts report data" field))
+    (Ok ()) fields
+
 let run_of_json json =
   try
     let open Yojson.Safe.Util in
@@ -3193,6 +3215,25 @@ let run_of_json json =
       in
       let* results =
         decode_list result_of_json (json |> member "mutants" |> to_list)
+      in
+      let resumed =
+        List.fold_left
+          (fun count result ->
+            if evidence_origin_is_resumed result.evidence_origin then count + 1
+            else count)
+          0 results
+      in
+      let* checkpointed =
+        if schema_version = 1 then Ok (List.length results)
+        else
+          let count =
+            json |> member "evidence" |> member "checkpointed" |> to_int
+          in
+          if count < resumed then
+            Error "evidence.checkpointed is below the resumed result count"
+          else if count > List.length results then
+            Error "evidence.checkpointed exceeds the result count"
+          else Ok count
       in
       let* not_run =
         decode_list mutant_of_json (json |> member "not_run" |> to_list)
@@ -3329,6 +3370,7 @@ let run_of_json json =
             };
           status;
           results;
+          checkpointed;
           completeness;
           expectations;
           skipped;
@@ -3361,6 +3403,10 @@ let run_of_json json =
           validate_coverage encoded_results run.results
       in
       let* () = validate_summary encoded_summary run in
+      let* () =
+        if schema_version = 1 then Ok ()
+        else validate_evidence (member "evidence" json) run
+      in
       Ok run
   with
   | Yojson.Safe.Util.Type_error (message, _) -> Error message
@@ -3972,6 +4018,30 @@ let load_checkpoint (journal : journal) ~source ~expected =
             | Some contents ->
                 decode_checkpoint journal ~source ~expected contents))
 
+let valid_checkpoint_for (journal : journal) ~expected contents =
+  let open Yojson.Safe.Util in
+  try
+    match
+      decode_checked_document ~document_type:"ocaml-mutants.run-checkpoint-v1"
+        contents
+    with
+    | Error _ -> false
+    | Ok body -> (
+        String.equal (body |> member "fingerprint" |> to_string) journal.key
+        && String.equal
+             (body |> member "session_run_id" |> to_string)
+             (Core.Run_id.to_string journal.session_id)
+        && String.equal
+             (body |> member "mutant_id" |> to_string)
+             (Core.Mutant.Id.full (Core.Mutant.id expected))
+        &&
+        match result_of_json (member "result" body) with
+        | Ok result ->
+            Core.Mutant.equal_identity result.mutant expected
+            && checkpointable_result result
+        | Error _ -> false)
+  with Yojson.Safe.Util.Type_error _ | Invalid_argument _ -> false
+
 let checkpoint_mutant (journal : journal) result =
   if not (checkpointable_result result) then Ok ()
   else
@@ -3998,11 +4068,18 @@ let checkpoint_mutant (journal : journal) result =
                   ~limit:33554432L
               in
               if existing = Some contents then Ok ()
-              else
+              else if
+                Option.exists
+                  (valid_checkpoint_for journal ~expected:result.mutant)
+                  existing
+              then
                 Error
                   (journal_error
                      ~path:(store_path journal.store path)
-                     "checkpoint conflicts with an existing immutable record"))
+                     "checkpoint conflicts with an existing immutable record")
+              else
+                replace_journal_file journal.store journal.reservation path
+                  contents)
 
 let complete_journal (journal : journal) =
   with_reservation_lock journal.reservation (fun () ->

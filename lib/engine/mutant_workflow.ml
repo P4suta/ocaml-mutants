@@ -96,7 +96,7 @@ let target_path ~root mutant =
       Error (workflow_error "mutant source path escapes the workspace")
     else
       try
-        let stat = Unix.lstat target in
+        let stat = Unix.lstat (windows_extended_path target) in
         if stat.st_kind <> Unix.S_REG then
           Error
             (workflow_error
@@ -350,6 +350,21 @@ let revert ~root ~id =
     let* () =
       if within ~root:(canonical root) (Filename.dirname target) then Ok ()
       else Error (workflow_error "undo source path escapes the workspace")
+    in
+    let* () =
+      try
+        let metadata = Unix.lstat (windows_extended_path target) in
+        if metadata.st_kind = Unix.S_REG then Ok ()
+        else
+          Error
+            (workflow_error
+               ~context:[ ("path", target) ]
+               "refusing to revert a non-regular source file")
+      with Unix.Unix_error (error, operation, argument) ->
+        Error
+          (workflow_error ~cause:Error.Io_failure
+             ~context:[ ("path", target); ("operation", operation) ]
+             (Printf.sprintf "%s: %s" argument (Unix.error_message error)))
     in
     let* current = read_file target |> map_io "read" target in
     if not (String.equal (digest current) record.applied_digest) then

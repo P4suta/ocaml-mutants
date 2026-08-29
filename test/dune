@@ -106,7 +106,7 @@
 
 (test
  (name reservation_contract_tests)
- (libraries ocaml_mutants_core ocaml_mutants_engine alcotest))
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest test_fixtures))
 
 (rule
  (alias dogfood-fast)
@@ -117,7 +117,7 @@
 
 (test
  (name maintenance_lease_contract_tests)
- (libraries ocaml_mutants_core ocaml_mutants_engine alcotest))
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest test_fixtures))
 
 (rule
  (alias dogfood-fast)
@@ -128,7 +128,7 @@
 
 (test
  (name report_contract_tests)
- (libraries ocaml_mutants_core ocaml_mutants_engine alcotest))
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest test_fixtures))
 
 (rule
  (alias dogfood-fast)
@@ -139,7 +139,12 @@
 
 (test
  (name one_zero_contract_tests)
- (libraries ocaml_mutants_core ocaml_mutants_engine alcotest yojson))
+ (libraries
+  ocaml_mutants_core
+  ocaml_mutants_engine
+  alcotest
+  yojson
+  test_fixtures))
 
 (rule
  (alias dogfood-fast)
@@ -150,7 +155,12 @@
 
 (test
  (name run_report_consistency_contract_tests)
- (libraries ocaml_mutants_core ocaml_mutants_engine alcotest yojson))
+ (libraries
+  ocaml_mutants_core
+  ocaml_mutants_engine
+  alcotest
+  yojson
+  test_fixtures))
 
 (rule
  (alias dogfood-fast)
@@ -225,6 +235,15 @@
    %{dep:../scripts/verify-workspace-manifest.py}
    %{dep:../scripts/verify-dogfood-run.py}
    %{dep:../schema/run-report-v2.schema.json})))
+
+(rule
+ (alias dogfood-fast)
+ (deps ../scripts/package-release.py ../scripts/test_package_release.py)
+ (action
+  (run
+   python
+   %{dep:../scripts/test_package_release.py}
+   %{dep:../scripts/package-release.py})))
 
 (test
  (name expectation_contract_tests)

@@ -471,6 +471,8 @@ let test_instrumentation_guard_shape () =
           ("process helpers are isolated", "OCAML_MUTANTS_PROCESS_HELPER");
           ("helper marker disables runtime", "if process_helper then None");
           ("unknown IDs preserve the original", "Some _ -> (true)");
+          ("domain-safe hit collection", "Stdlib.Atomic.compare_and_set");
+          ("process-safe hit sidecars", "Stdlib.Filename.open_temp_file");
           ("hit data flushes at process exit", "Stdlib.at_exit flush");
         ]
 
@@ -532,17 +534,19 @@ let test_instrumentation_hit_owner () =
           Alcotest.failf "hit-owner fixture did not compile: %s\n%s"
             (Engine.Process_supervisor.status_string status)
             compilation.stderr);
-      let hit_path = Filename.concat directory "hits.log" in
+      let run_index = ref 0 in
       let run label supplied_owner expected =
-        (match Engine.Util.atomic_write hit_path "" with
-        | Ok () -> ()
-        | Error message -> Alcotest.fail message);
+        let hit_directory =
+          Filename.concat directory (Printf.sprintf "hits-%d" !run_index)
+        in
+        incr run_index;
+        Unix.mkdir hit_directory 0o700;
         let result =
           Engine.Process_supervisor.run ~timeout:30. ~cwd:directory
             ~env:
               [
                 ("OCAML_MUTANTS_ACTIVE", None);
-                ("OCAML_MUTANTS_HIT_FILE", Some hit_path);
+                ("OCAML_MUTANTS_HIT_FILE", Some hit_directory);
                 (Core.Instrumentation.hit_owner_environment, Some supplied_owner);
               ]
             [ executable ]
@@ -553,7 +557,13 @@ let test_instrumentation_hit_owner () =
             Alcotest.failf "%s fixture failed: %s\n%s" label
               (Engine.Process_supervisor.status_string status)
               result.stderr);
-        let contents = get_ok (Engine.Util.read_file hit_path) |> String.trim in
+        let contents =
+          Engine.Util.files_recursive hit_directory
+          |> List.map (fun relative ->
+              get_ok
+                (Engine.Util.read_file (Filename.concat hit_directory relative)))
+          |> String.concat "" |> String.trim
+        in
         Alcotest.(check string) label expected contents
       in
       run "matching catalog owns hit file" owner
@@ -1038,6 +1048,7 @@ let test_report_codec () =
           ordinary_result error_mutant (Core.Outcome.Error "spawn failed")
             "error";
         ];
+      checkpointed = 5;
       completeness = Engine.Run_store.Complete;
       expectations =
         [
@@ -1220,6 +1231,7 @@ let test_report_codec () =
         };
       status = Engine.Run_store.Failed primary;
       results = [];
+      checkpointed = 0;
       expectations = [];
     }
   in
@@ -1375,6 +1387,7 @@ let test_stryker_report_projection () =
         };
       status = Engine.Run_store.Completed;
       results;
+      checkpointed = 6;
       completeness = Engine.Run_store.Partial [ not_run ];
       expectations =
         [
@@ -1482,6 +1495,7 @@ let test_stryker_report_projection () =
       run with
       results =
         [ result killed Core.Outcome.Killed; result killed Core.Outcome.Killed ];
+      checkpointed = 2;
       completeness = Engine.Run_store.Complete;
       expectations = [];
     }
@@ -1543,6 +1557,7 @@ let test_stryker_report_projection () =
     {
       run with
       results = [ result unicode_mutant Core.Outcome.Killed ];
+      checkpointed = 1;
       completeness = Engine.Run_store.Complete;
       expectations = [];
     }

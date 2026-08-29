@@ -1,0 +1,5 @@
+(library
+ (name test_fixtures)
+ (wrapped false)
+ (modules fixtures)
+ (libraries ocaml_mutants_engine yojson))

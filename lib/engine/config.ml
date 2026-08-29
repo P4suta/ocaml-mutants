@@ -469,6 +469,26 @@ let require_unique path ~field ~description key values =
     values;
   match List.rev !errors with [] -> valid values | errors -> Error errors
 
+let require_unique_array path ~description key values =
+  let seen = Hashtbl.create (List.length values) in
+  let errors = ref [] in
+  List.iteri
+    (fun index value ->
+      let key = key value in
+      match Hashtbl.find_opt seen key with
+      | None -> Hashtbl.add seen key index
+      | Some first_index ->
+          errors :=
+            {
+              path = path @ [ string_of_int index ];
+              message =
+                Printf.sprintf "duplicate %s (first declared at index %d)"
+                  description first_index;
+            }
+            :: !errors)
+    values;
+  match List.rev !errors with [] -> valid values | errors -> Error errors
+
 let expectations path value =
   match table_array expectation path value with
   | Error _ as error -> error
@@ -489,16 +509,23 @@ let stages path value =
 let operators path value =
   match strings path value with
   | Error _ as error -> error
-  | Ok names ->
-      List.fold_left
-        (fun result name ->
-          match (result, Core.Operator.Family.of_string name) with
-          | Ok values, Ok value -> Ok (value :: values)
-          | Error errors, Ok _ -> Error errors
-          | Ok _, Error message -> Error [ { path; message } ]
-          | Error errors, Error message -> Error ({ path; message } :: errors))
-        (Ok []) names
-      |> map List.rev
+  | Ok names -> (
+      let decoded =
+        List.fold_left
+          (fun result name ->
+            match (result, Core.Operator.Family.of_string name) with
+            | Ok values, Ok value -> Ok (value :: values)
+            | Error errors, Ok _ -> Error errors
+            | Ok _, Error message -> Error [ { path; message } ]
+            | Error errors, Error message -> Error ({ path; message } :: errors))
+          (Ok []) names
+        |> map List.rev
+      in
+      match decoded with
+      | Error _ as error -> error
+      | Ok values ->
+          require_unique_array path ~description:"mutation operator"
+            Core.Operator.Family.name values)
 
 let cache_mode path value =
   match string path value with
@@ -1142,8 +1169,19 @@ let toml_strings values =
 
 let command_toml command = Core.Nonempty_argv.to_list command |> toml_strings
 
+let toml_float value =
+  if not (Float.is_finite value) then invalid_arg "TOML numbers must be finite"
+  else
+    let rendered = Printf.sprintf "%.17g" value in
+    if
+      String.contains rendered '.'
+      || String.contains rendered 'e'
+      || String.contains rendered 'E'
+    then rendered
+    else rendered ^ ".0"
+
 let option_float value =
-  match value with None -> None | Some value -> Some (string_of_float value)
+  match value with None -> None | Some value -> Some (toml_float value)
 
 let to_toml config =
   let buffer = Buffer.create 2048 in
@@ -1175,18 +1213,19 @@ let to_toml config =
   line "[test]";
   line "driver = %s" (toml_string (driver_name config.test.driver));
   (match config.test.stages with
-  | [ stage ] -> line "command = %s" (command_toml stage.command)
+  | [ stage ] when String.equal stage.name "test" ->
+      line "command = %s" (command_toml stage.command)
   | _ -> ());
   line "timeout = %s"
     (match config.test.timeout with
     | None -> toml_string "auto"
-    | Some duration -> string_of_float (Core.Duration.to_seconds duration));
+    | Some duration -> toml_float (Core.Duration.to_seconds duration));
   line "baseline_runs = %d" (Core.Positive_int.to_int config.test.baseline_runs);
   line "parallel_safe = %b" config.test.parallel_safe;
   line "external_inputs = %s" (toml_strings config.test.external_inputs);
   line "reproducible = %b" config.test.reproducible;
   (match config.test.stages with
-  | [] | [ _ ] -> ()
+  | [ stage ] when String.equal stage.name "test" -> ()
   | stages ->
       List.iter
         (fun stage ->
@@ -1252,12 +1291,15 @@ exclude = ["**/test/**", "**/tests/**", "**/_build/**"]
 
 [test]
 driver = "auto"
-command = ["dune", "runtest", "--force"]
 timeout = "auto"
 baseline_runs = 3
 parallel_safe = false
 external_inputs = []
 reproducible = true
+
+[[test.stages]]
+name = "full"
+command = ["dune", "runtest", "--force"]
 
 [execution]
 mode = "strict"

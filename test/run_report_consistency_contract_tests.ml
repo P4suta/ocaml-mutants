@@ -58,6 +58,9 @@ let result ?expected_reason mutant outcome : Engine.Run_store.mutant_result =
 let expected_reason = "equivalent by construction"
 
 let metadata id : Engine.Run_store.metadata =
+  let resolved_config, config_digest =
+    Fixtures.config_evidence Engine.Config.defaults
+  in
   {
     id;
     started_at = "2026-01-01T00:00:00Z";
@@ -89,12 +92,9 @@ let metadata id : Engine.Run_store.metadata =
     execution_mode = "strict";
     historical_reuse = "off";
     cache_key = String.make 64 'b';
-    resolved_config = Engine.Config.to_yojson Engine.Config.defaults;
+    resolved_config;
     input_fingerprint = String.make 64 'b';
-    config_digest =
-      Engine.Util.sha256
-        (Yojson.Safe.to_string ~std:true
-           (Engine.Config.to_yojson Engine.Config.defaults));
+    config_digest;
   }
 
 let run_id =
@@ -113,6 +113,7 @@ let base_run () : Engine.Run_store.run =
         result ~expected_reason expected_mutant Core.Outcome.Survived;
         result killed_mutant Core.Outcome.Killed;
       ];
+    checkpointed = 2;
     completeness = Engine.Run_store.Partial [ pending_mutant ];
     expectations =
       [
@@ -201,6 +202,7 @@ let test_completeness_round_trip () =
         };
       status = Engine.Run_store.Failed failure;
       results = [];
+      checkpointed = 0;
       completeness = Engine.Run_store.Partial [];
       expectations = [];
     }
@@ -249,6 +251,13 @@ let test_summary_is_derived () =
     (map_member "summary" (replace_member "score" (`Float 250.0)) encoded);
   reject "unknown summary kind"
     (map_member "summary" (replace_member "kind" (`String "unknown")) encoded)
+
+let test_evidence_counters_are_derived () =
+  let encoded = Engine.Run_store.run_to_yojson (base_run ()) in
+  reject "checkpoint count above result count"
+    (map_member "evidence" (replace_member "checkpointed" (`Int 3)) encoded);
+  reject "changed executed evidence count"
+    (map_member "evidence" (replace_member "executed" (`Int 1)) encoded)
 
 let test_status_and_failure_are_consistent () =
   let run = base_run () in
@@ -381,9 +390,8 @@ let test_report_redactions_are_opaque () =
         { Engine.Config.defaults.privacy with redactions = [ "private-token" ] };
     }
   in
-  let resolved_config = Engine.Config.to_report_yojson config in
-  let config_digest =
-    Engine.Util.sha256 (Yojson.Safe.to_string ~std:true resolved_config)
+  let resolved_config, config_digest =
+    Fixtures.config_evidence ~encode:Engine.Config.to_report_yojson config
   in
   let base = base_run () in
   let run =
@@ -517,6 +525,8 @@ let () =
           Alcotest.test_case "complete and partial witnesses round trip" `Quick
             test_completeness_round_trip;
           Alcotest.test_case "summary is derived" `Quick test_summary_is_derived;
+          Alcotest.test_case "evidence counters are derived" `Quick
+            test_evidence_counters_are_derived;
           Alcotest.test_case "unconfirmed timeout is not detected" `Quick
             test_unconfirmed_timeout_is_not_detected;
           Alcotest.test_case "status matches failure" `Quick

@@ -37,21 +37,25 @@ let command_version ~cancel root command =
       Error (interrupted Error.Analysis "toolchain detection was interrupted")
   | _ when Process_supervisor.succeeded result ->
       Ok (String.trim (result.stdout ^ result.stderr))
-  | _ -> Ok (Process_supervisor.status_string result.status)
+  | _ ->
+      Error
+        (Error.create ~phase:Error.Analysis ~cause:Error.Process_failure
+           ~context:
+             [
+               ("command", String.concat " " command);
+               ("status", Process_supervisor.status_string result.status);
+             ]
+           "toolchain detection command failed: %s"
+           (String.concat " " command))
 
 let toolchain ~cancel ~root =
   let* ocaml = command_version ~cancel root [ "ocamlc"; "-version" ] in
   let* dune = command_version ~cancel root [ "dune"; "--version" ] in
-  let* opam_switch =
-    command_version ~cancel root [ "opam"; "switch"; "show"; "--safe" ]
-  in
   let* opam_closure =
     command_version ~cancel root
       [ "opam"; "list"; "--installed"; "--columns=name,version"; "--short" ]
   in
-  Ok
-    (Printf.sprintf "ocaml=%s; dune=%s; opam-switch=%s; opam=%s" ocaml dune
-       opam_switch opam_closure)
+  Ok (Printf.sprintf "ocaml=%s; dune=%s; opam=%s" ocaml dune opam_closure)
 
 let canonical_environment () =
   Unix.environment () |> Array.to_list |> List.sort String.compare
@@ -80,34 +84,107 @@ type readiness = {
   hit_map : Run_store.hit_map_entry list;
 }
 
-let read_hit_file ~catalog path =
+let read_hit_directory ~catalog directory =
   let known = Hashtbl.create (Core.Catalog.length catalog) in
   Core.Catalog.to_list catalog
   |> List.iter (fun mutant ->
       Hashtbl.replace known (Core.Mutant.Id.full (Core.Mutant.id mutant)) ());
-  match read_file path with
-  | Error message ->
-      Error
-        (Error.create ~phase:Error.Ready_proof ~cause:Error.Io_failure
-           ~context:[ ("path", path) ]
-           "cannot read runtime hit file: %s" message)
-  | Ok contents -> (
-      let ids =
-        split_lines contents |> List.map String.trim
-        |> List.filter (fun value -> value <> "")
-        |> List.sort_uniq String.compare
+  let read_entries () =
+    try
+      let names =
+        Sys.readdir (windows_extended_path directory)
+        |> Array.to_list |> List.sort String.compare
       in
-      match List.find_opt (fun id -> not (Hashtbl.mem known id)) ids with
-      | None -> Ok ids
-      | Some id ->
-          Error
-            (Error.create ~phase:Error.Ready_proof
-               ~cause:Error.Invariant_violation
-               ~context:[ ("path", path); ("mutant_id", id) ]
-               "runtime hit file contains an unknown mutant ID"))
+      let rec read ids = function
+        | [] -> Ok ids
+        | name :: rest ->
+            let path = Filename.concat directory name in
+            let metadata = Unix.lstat (windows_extended_path path) in
+            if metadata.st_kind <> Unix.S_REG then
+              Error
+                (Error.create ~phase:Error.Ready_proof
+                   ~cause:Error.Invariant_violation
+                   ~context:[ ("path", path) ]
+                   "runtime hit directory contains a non-regular entry")
+            else
+              let* contents =
+                read_file path
+                |> Result.map_error (fun message ->
+                    Error.create ~phase:Error.Ready_proof
+                      ~cause:Error.Io_failure
+                      ~context:[ ("path", path) ]
+                      "cannot read runtime hit sidecar: %s" message)
+              in
+              read
+                (List.rev_append
+                   (split_lines contents |> List.map String.trim
+                   |> List.filter (fun value -> value <> ""))
+                   ids)
+                rest
+      in
+      read [] names
+    with
+    | Sys_error message ->
+        Error
+          (Error.create ~phase:Error.Ready_proof ~cause:Error.Io_failure
+             ~context:[ ("path", directory) ]
+             "cannot enumerate runtime hit directory: %s" message)
+    | Unix.Unix_error (error, operation, argument) ->
+        Error
+          (Error.create ~phase:Error.Ready_proof ~cause:Error.Io_failure
+             ~context:
+               [
+                 ("path", directory);
+                 ("operation", operation);
+                 ("argument", argument);
+               ]
+             "cannot enumerate runtime hit directory: %s"
+             (Unix.error_message error))
+  in
+  let* ids = read_entries () in
+  let ids = List.sort_uniq String.compare ids in
+  match List.find_opt (fun id -> not (Hashtbl.mem known id)) ids with
+  | None -> Ok ids
+  | Some id ->
+      Error
+        (Error.create ~phase:Error.Ready_proof ~cause:Error.Invariant_violation
+           ~context:[ ("mutant_id", id) ]
+           "runtime hit sidecar contains an unknown mutant ID")
 
-let remove_hit_file path =
-  try Sys.remove (windows_extended_path path) with Sys_error _ -> ()
+let remove_hit_directory path =
+  match remove_tree path with Ok () | Error _ -> ()
+
+let hit_directory_sequence = Atomic.make 0
+
+let create_hit_directory ~root ~stage_index =
+  let rec create () =
+    let sequence = Atomic.fetch_and_add hit_directory_sequence 1 in
+    let path =
+      Filename.concat root
+        (Printf.sprintf ".ocaml-mutants-hits-%d-%d-%d.d" (Unix.getpid ())
+           stage_index sequence)
+    in
+    try
+      Unix.mkdir (windows_extended_path path) 0o700;
+      Ok path
+    with
+    | Unix.Unix_error (Unix.EEXIST, _, _) -> create ()
+    | Unix.Unix_error (error, operation, argument) ->
+        Error
+          (Error.create ~phase:Error.Ready_proof ~cause:Error.Io_failure
+             ~context:
+               [
+                 ("path", path); ("operation", operation); ("argument", argument);
+               ]
+             "cannot initialize runtime hit directory: %s"
+             (Unix.error_message error))
+    | Sys_error message ->
+        Error
+          (Error.create ~phase:Error.Ready_proof ~cause:Error.Io_failure
+             ~context:[ ("path", path) ]
+             "cannot initialize runtime hit directory: %s" message)
+  in
+  create ()
 
 let dune_exhaustive_stage_name = "dune:@runtest"
 
@@ -145,32 +222,22 @@ let run_readiness ~cancel ~root ~config ~catalog ~build_dir ~timeout =
             hit_map = List.rev hit_map |> classify_exhaustive_hits config;
           }
     | (stage : Config.stage) :: rest ->
-        let hit_path =
-          Filename.concat root
-            (Printf.sprintf ".ocaml-mutants-hits-%d-%d.log" (Unix.getpid ())
-               stage_index)
-        in
-        let* () =
-          write_file hit_path ""
-          |> Result.map_error (fun message ->
-              Error.create ~phase:Error.Ready_proof ~cause:Error.Io_failure
-                ~context:[ ("path", hit_path) ]
-                "cannot initialize runtime hit file: %s" message)
-        in
+        let* hit_directory = create_hit_directory ~root ~stage_index in
         let result =
           Process_supervisor.run ~cancel
             ?timeout:(Option.map Core.Duration.to_seconds timeout)
             ~cwd:root
             ~env:
               (("OCAML_MUTANTS_ACTIVE", None)
-              :: ("OCAML_MUTANTS_HIT_FILE", Some hit_path)
+              :: ( "OCAML_MUTANTS_HIT_FILE",
+                   Some (windows_extended_path hit_directory) )
               :: (Core.Instrumentation.hit_owner_environment, Some hit_owner)
               :: Test_command.dune_cache_environment ~root)
             (test_command stage.command
                (Printf.sprintf "%s-stage-%d" build_dir stage_index))
         in
-        let hits = read_hit_file ~catalog hit_path in
-        remove_hit_file hit_path;
+        let hits = read_hit_directory ~catalog hit_directory in
+        remove_hit_directory hit_directory;
         if result.status = Process_supervisor.Cancelled then
           Error
             (interrupted Error.Ready_proof
@@ -946,12 +1013,16 @@ let run_mutants ~cancel ~root ~config ~store ~journal ~key ~sources ~fresh
   let started = Unix.gettimeofday () in
   let journal_error = ref None in
   let cache_error = ref None in
+  let checkpointed = ref 0 in
   let warnings = ref [] in
-  let save_now result =
+  let save_now ~resumed result =
     (* Crash recovery is always on and independent from historical reuse. *)
-    (match Run_store.checkpoint_mutant journal result with
-    | Ok () -> ()
-    | Error error -> if !journal_error = None then journal_error := Some error);
+    (if resumed then incr checkpointed
+     else if Run_store.checkpointable_result result then
+       match Run_store.checkpoint_mutant journal result with
+       | Ok () -> incr checkpointed
+       | Error error ->
+           if !journal_error = None then journal_error := Some error);
     if
       cache_enabled
       && result.Run_store.expected_reason = None
@@ -992,7 +1063,7 @@ let run_mutants ~cancel ~root ~config ~store ~journal ~key ~sources ~fresh
                elapsed_seconds;
                eta_seconds;
              });
-        save_now result)
+        save_now ~resumed result)
   in
   Event_bus.emit
     (Event_bus.Phase_started
@@ -1164,7 +1235,11 @@ let run_mutants ~cancel ~root ~config ~store ~journal ~key ~sources ~fresh
         Some error
     | None, None, None -> None
   in
-  (results, Cancel.is_requested cancel, persistence_error, List.rev !warnings)
+  ( results,
+    Cancel.is_requested cancel,
+    persistence_error,
+    !checkpointed,
+    List.rev !warnings )
 
 let cache_mode_name = function
   | Config.Auto -> "auto"
@@ -1468,6 +1543,7 @@ let evaluate_expectations ~selection ~catalog ~results config =
 type draft = {
   metadata : finished_at:string -> Run_store.metadata;
   results : Run_store.mutant_result list;
+  checkpointed : int;
   completeness : Run_store.completeness;
   expectations : Run_store.expectation_evaluation list;
   skipped : Run_store.skip_summary list;
@@ -1548,6 +1624,7 @@ let preanalysis_failure ~run_id ~started_at ~root ~config ~selection ~output
       {
         metadata;
         results = [];
+        checkpointed = 0;
         completeness = Run_store.Partial [];
         expectations = unevaluated_expectations config;
         skipped = [];
@@ -1570,6 +1647,7 @@ let analyzed_failure ~run_id ~started_at ~analysis ~config ~selection ~output
       {
         metadata;
         results = [];
+        checkpointed = 0;
         completeness = Run_store.Partial (Core.Catalog.to_list analysis.catalog);
         expectations =
           evaluate_expectations ~selection ~catalog:analysis.catalog ~results:[]
@@ -1588,8 +1666,7 @@ let retained_source_reader sources ~path =
   | Some source -> Ok (Core.Source.to_string source)
   | None -> unavailable_source ~path
 
-let completed_verdict ~catalog ~results ~not_run ~expectations =
-  ignore expectations;
+let completed_verdict ~catalog ~results ~not_run =
   if not_run <> [] then Application.Completed Application.Contract_failure
   else
     let outcomes =
@@ -1743,6 +1820,7 @@ let prepare_snapshot_action ~cancel ~store ~reservation ~run_id ~started_at
                               let ( results,
                                     was_interrupted,
                                     cache_error,
+                                    checkpointed,
                                     warnings ) =
                                 run_mutants ~cancel ~root:snapshot_root ~config
                                   ~store ~journal ~key ~sources ~fresh
@@ -1817,7 +1895,7 @@ let prepare_snapshot_action ~cancel ~store ~reservation ~run_id ~started_at
                                   | None ->
                                       completed_verdict
                                         ~catalog:analysis.catalog ~results
-                                        ~not_run ~expectations
+                                        ~not_run
                               in
                               let metadata ~finished_at =
                                 make_final_metadata ~finished_at ~id:run_id
@@ -1831,6 +1909,7 @@ let prepare_snapshot_action ~cancel ~store ~reservation ~run_id ~started_at
                                   {
                                     metadata;
                                     results;
+                                    checkpointed;
                                     completeness;
                                     expectations;
                                     skipped = analysis.skipped;
@@ -1864,6 +1943,7 @@ let run_of_draft ~finished_at ~resolution draft =
     Run_store.metadata = draft.metadata ~finished_at;
     status;
     results = draft.results;
+    checkpointed = draft.checkpointed;
     completeness = draft.completeness;
     expectations = draft.expectations;
     skipped = draft.skipped;

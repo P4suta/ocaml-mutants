@@ -25,11 +25,11 @@ module Request = Application_request
 let ( let* ) value continuation = Result.bind value continuation
 let presplit_command = ref None
 
-(* The `--` command tail applies to the explicit `run` subcommand and to the
-   implicit default-command invocation alike; every other subcommand keeps `--`
-   as an ordinary end-of-options token. cmdliner 2.x resolves subcommand names
-   exactly (prefix matching stays off unless CMDLINER_LEGACY_PREFIXES is set),
-   so exact membership below agrees with its dispatch. *)
+(* The `--` command tail applies only to the explicit `run` subcommand; every
+   other subcommand keeps `--` as an ordinary end-of-options token. cmdliner 2.x
+   resolves subcommand names exactly (prefix matching stays off unless
+   CMDLINER_LEGACY_PREFIXES is set), so exact membership below agrees with its
+   dispatch. *)
 let split_run_argv ~subcommands:_ argv =
   if Array.length argv < 2 || not (String.equal argv.(1) "run") then argv
   else
@@ -544,7 +544,7 @@ let report_output_option =
           "Write one artifact to PATH, or multiple formats below directory \
            PATH.")
 
-let decode_report_formats ~json names =
+let decode_report_formats ~json ~stryker_thresholds names =
   if json && names <> [] then
     Error (Error.make Error.Usage "--json cannot be combined with --format")
   else
@@ -554,7 +554,7 @@ let decode_report_formats ~json names =
     let rec decode formats = function
       | [] -> Ok (List.rev formats)
       | name :: rest -> (
-          match Artifact_report.of_string name with
+          match Artifact_report.of_string ?stryker_thresholds name with
           | Ok format -> decode (format :: formats) rest
           | Error message -> Error (Error.make Error.Usage "%s" message))
     in
@@ -564,8 +564,12 @@ let report_action path id json no_color color_mode formats output_path
     threshold_high threshold_low =
   let root = Unix.realpath path in
   let result =
-    let* formats = decode_report_formats ~json formats in
-    let uses_stryker = List.mem Artifact_report.Stryker formats in
+    let uses_stryker =
+      (not json)
+      && List.exists
+           (function "stryker" | "stryker-json" -> true | _ -> false)
+           formats
+    in
     let* stryker_thresholds =
       match (uses_stryker, threshold_high, threshold_low) with
       | false, None, None -> Ok None
@@ -583,6 +587,15 @@ let report_action path id json no_color color_mode formats output_path
             (Error.make Error.Usage
                "--format stryker requires --threshold-high and --threshold-low")
     in
+    let* formats = decode_report_formats ~json ~stryker_thresholds formats in
+    let* () =
+      if List.length formats > 1 && output_path = Some "-" then
+        Error
+          (Error.make Error.Usage
+             "multiple --format values cannot use --output -; specify a \
+              directory")
+      else Ok ()
+    in
     let* store = store_for ~root in
     let* run = Run_store.load_run store id in
     let color = output_path = None && terminal_color ~no_color ~color_mode in
@@ -590,9 +603,7 @@ let report_action path id json no_color color_mode formats output_path
       let rec render rendered = function
         | [] -> Ok (List.rev rendered)
         | format :: rest ->
-            let* contents =
-              Artifact_report.render ~root ~color ?stryker_thresholds format run
-            in
+            let* contents = Artifact_report.render ~root ~color format run in
             render ((format, contents) :: rendered) rest
       in
       render [] formats

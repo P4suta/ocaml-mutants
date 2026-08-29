@@ -61,10 +61,11 @@ val original : validated mutant -> string
 val replacement : 'phase mutant -> string
 val source_digest : validated mutant -> string
 
-(* A structural, non-authoritative identity for history display and manual
-   rebind suggestions. It deliberately excludes byte offsets and the complete
-   source digest and must never be used for cache or policy evidence. *)
 val lineage_id : validated mutant -> string
+(** A structural, non-authoritative identity for history display and manual
+    rebind suggestions. It deliberately excludes byte offsets and the complete
+    source digest and must never be used for cache or policy evidence. *)
+
 val equal_identity : t -> t -> bool
 val normalize_path : string -> string
 val compare : t -> t -> int
