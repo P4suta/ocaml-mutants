@@ -198,3 +198,21 @@ jobs:
       - run: test -f "$(opam var share)/ocaml-mutants/mutation-testing-report-v2.schema.json"
       - run: test -f "$(opam var share)/ocaml-mutants/json-schema.md"
       - run: test -z "$(find "$(opam var lib)/ocaml-mutants" -name '*.cmi' -print -quit)"
+
+  # The one status check branch protection requires,
+  # named the same in every P4suta repository.
+  # It passes only when every job it needs succeeded or was skipped.
+  required:
+    name: required
+    if: always()
+    needs: [changes, lint, static-checks, test, dune-minimum, dogfood-list, package-install]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Fail unless every needed job succeeded or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "${RESULTS}"
+          jq -e 'all(.[]; IN("success", "skipped"))' <<< "${RESULTS}"
