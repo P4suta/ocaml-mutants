@@ -98,7 +98,16 @@ def workspace_contract(manifest_tool: str) -> None:
 
 
 def captured() -> dict[str, object]:
-    return {"contents": "", "truncated": False, "total_bytes": 0}
+    return {
+        "contents": "",
+        "truncated": False,
+        "total_bytes": 0,
+        "retained_raw_sha256": (
+            "e3b0c44298fc1c149afbf4c8996fb924"
+            "27ae41e4649b934ca495991b7852b855"
+        ),
+        "encoding_errors": 0,
+    }
 
 
 def valid_report() -> dict[str, object]:

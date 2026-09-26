@@ -46,13 +46,7 @@ let canonical_environment () =
   Unix.environment () |> Array.to_list |> List.sort String.compare
   |> String.concat "\000"
 
-let default_command command =
-  Core.Nonempty_argv.to_list command = [ "dune"; "runtest"; "--force" ]
-
-let test_command command build_dir =
-  if default_command command then
-    [ "dune"; "runtest"; "--build-dir"; build_dir; "--force" ]
-  else Core.Nonempty_argv.to_list command
+let test_command = Test_command.resolve
 
 let duration_exn seconds =
   match Core.Duration.of_seconds seconds with
@@ -383,7 +377,11 @@ let merge_captured captures =
       0 captures
   in
   let contents =
-    List.map (fun captured -> captured.Run_store.contents) captures
+    List.map
+      (fun captured ->
+        Option.value captured.Run_store.raw_for_merge
+          ~default:captured.Run_store.contents)
+      captures
     |> String.concat ""
   in
   let retained =
@@ -518,7 +516,7 @@ let run_mutants ~cancel ~root ~config ~store ~key ~sources ~fresh ~timeout
   let jobs =
     if
       List.for_all
-        (fun (stage : Config.stage) -> default_command stage.command)
+        (fun (stage : Config.stage) -> Test_command.dune_managed stage.command)
         config.Config.test.stages
       || config.Config.test.parallel_safe
     then

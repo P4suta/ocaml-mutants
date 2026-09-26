@@ -1,6 +1,17 @@
 module Core = Ocaml_mutants_core
 
-type captured = { contents : string; truncated : bool; total_bytes : int }
+type captured = private {
+  contents : string;
+  truncated : bool;
+  total_bytes : int;
+  retained_raw_sha256 : string;
+  encoding_errors : int;
+  (** Exact bytes retained only while composing live stage/timeout captures.
+      Decoded reports deliberately carry [None]: their normalized JSON text
+      and raw digest are evidence, but the pre-normalized bytes are not
+      recoverable from the document. *)
+  raw_for_merge : string option;
+}
 
 type stage_result = {
   name : string;
