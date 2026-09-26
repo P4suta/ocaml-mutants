@@ -27,7 +27,9 @@ exit policy, and interval-tree instrumentation.
 
 - `Dune_adapter` is the workspace boundary. It uses the `csexp` library and a
   typed decoder for `dune describe workspace --format csexp --lang 0.1`;
-  experimental test descriptions stay isolated from this stable decoder.
+  experimental test descriptions stay isolated from this stable decoder. The
+  resolved Dune driver sorts individual `@DIR/runtest-NAME` aliases and retains
+  `@runtest` as the exhaustive proof for unclassified/custom rules.
 - `Ocaml_frontend` reads `.cmt` files with compiler-libs. It validates resolved
   Stdlib identifiers for operator mutations, typed branch compatibility supplied
   by the compiler, non-ghost locations, and exact source slices. The typed
@@ -37,9 +39,9 @@ exit policy, and interval-tree instrumentation.
   generation path.
 - `Workspace_snapshot` derives copying and fingerprinting from one sorted
   manifest and rejects escaping links, junctions, and special files. Its
-  current path-based cleanup is not yet the final adversarial race boundary;
-  migration to the shared native directory-capability substrate is a
-  pre-release gate.
+  cleanup is a release-critical adversarial race boundary. A supported release
+  must use the shared native directory-capability substrate and may not ship a
+  path-based fallback.
 - `Process_supervisor` uses `posix_spawn` to enter a single-threaded helper that
   establishes a POSIX process group before releasing the target. On Windows the
   helper is created in a console process group distinct from the CLI, and the
@@ -68,54 +70,58 @@ exit policy, and interval-tree instrumentation.
   unsupported-environment error. Other native failures fail the contract. If
   Job ownership cannot be established, execution fails closed; there is no
   process-enumeration, PowerShell, or `taskkill` fallback.
+  Because the helper is the CLI executable itself, a one-shot internal
+  environment marker disables mutation activation and hit recording during
+  helper initialization. The marker is removed before the real target starts,
+  and mutant attempts remove inherited readiness hit files because coverage is
+  collected only by the dedicated readiness pass. Each runtime also embeds a
+  deterministic catalog ownership token and records hits only when the owner of
+  the active hit file matches. These boundaries prevent doubly nested mutation
+  runs from mixing outer and inner catalog IDs.
 - `Application.Make` owns one cancellation token and deterministic
   process-lifetime signal subscriptions. The initial OS-router installation can
   fail before work begins; after subscription, deactivation is an in-memory,
-  no-fail handoff performed only after report commit. `Runner` currently
-  composes the concrete workspace, Dune, Git, process, and store modules; the
-  full service-algebra migration is a pre-release acceptance item rather than a
-  documented capability.
+  no-fail handoff performed only after report commit. The live TUI supplies a
+  caller-owned token through the same reservation/snapshot/commit lifecycle and
+  translates Matrix keys into `Cancel.request` without installing a competing
+  signal subscription. Privacy-bounded settled results travel on the callback
+  sink for immediate evidence/diff display while JSONL retains its compact v1
+  projection. A streaming monochrome adapter removes only ordinary SGR output,
+  retaining Matrix terminal protocols for `NO_COLOR`. `Runner` composes these
+  private services; no OCaml service or operator ABI is public in 1.0.
 - `Run_store` namespaces reports by canonical workspace identity and writes
   outcomes and reports to the OS cache directory. The shared
-  directory-capability contract and in-memory namespace-swap suite are backed
-  natively on every platform: single-leaf cache-root materialization,
+  directory-capability contract and in-memory namespace-swap suite define:
+  single-leaf cache-root materialization,
   owner-private directory/file creation, exact v2 ownership establishment,
   root-relative shared/exclusive locks, captured reads, exact stage and
-  reservation-marker deletion, no-replace report publication, and atomic
-  latest-index replacement. Windows binds names through live handles and
-  sharing exclusion; POSIX pins inodes, retains capture-time components, and
+  reservation-marker deletion, no-replace report publication, atomic
+  latest-index replacement. Implemented primitives bind names through live
+  handles and sharing exclusion on Windows; POSIX pins inodes, retains
+  capture-time components, and
   re-verifies the name-to-inode binding at each commit (`mkdirat` creation,
   `renameat2`/`renameatx_np` no-replace publication, verified-name `unlinkat`
-  deletion with link-count release evidence). Mutant outcome-cache I/O and
-  GC/clean traversal and deletion remain path-based, and production recursive
-  deletion authority with mount-boundary proof plus the complete
-  `Workspace_snapshot` migration are still pre-release gates. Automatic
-  outcome caching remains disabled until both that authority boundary and the
-  complete input proof are closed.
+  deletion with link-count release evidence). Any remaining `Unsupported` in a
+  required primitive is a release hold, never a path-based fallback. Several
+  required native operations still return `Unsupported`, so this gate is not
+  yet closed.
+  Outcome-cache writes, GC/clean, journal cleanup, and recursive cache and
+  snapshot cleanup still use guarded path operations; migrating them to the
+  same captured capability substrate is therefore an explicit 1.0 release
+  hold.
 
-## Remaining requirements for automatic outcome caching
+## Historical outcome reuse
 
-`cache.mode = "auto"` stays proof-gated off. The cache key is already
-conservative — it includes the complete environment, the toolchain versions,
-the tool's own executable digest, the workspace digest, every catalog ID, and
-the rule/instrumentation/cache ABIs — so the open items are authority and
-input-proof gaps, not key strength:
-
-1. Authority boundary. Mutant outcome I/O and the GC/clean traversal must move
-   from path-based operations onto the owner-verified directory-capability
-   substrate (whose primitives are now native on Windows and POSIX both), and
-   `Workspace_snapshot` cleanup must complete the same migration. Until then a
-   shared cache directory is not adversarially safe.
-2. Complete input proof. The opam switch's dependency closure is not yet part
-   of the key, so upgrading a library or PPX in place could produce a stale
-   hit; and a failed executable-digest read currently degrades to a shared
-   `unavailable` constant instead of disabling caching for that run
-   (fail-open). Inputs that cannot be proved — network access, absolute-path
-   reads, time, randomness — need an explicit user declaration equivalent to
-   `test.parallel_safe` before `auto` may trust a run.
-3. Semantics and acceptance. The `auto` policy needs a documented definition
-   (an `on` whose save failures degrade to warnings), a per-subcommand
-   read/write matrix, and green cross-OS directory-capability suites.
+Run journals and checkpoints are always enabled and are not historical cache
+reuse. Historical reuse defaults to `off`; `exact` requires the complete input
+fingerprint, while `estimated` is visibly marked and rejected by the default
+policy. Fingerprint failure disables reuse for that run. The fingerprint covers
+the workspace, resolved configuration, complete environment, executable,
+OCaml/Dune versions, opam dependency closure, catalog IDs, declared external
+inputs, resolved stage executables, compiled PPX artifacts, and test binaries.
+Dune uses a private `enabled-except-user-rules` compiler-artifact cache to supply
+isolated worker build directories without sharing user test rules. Cross-OS and
+adversarial validation of that boundary remains a release gate.
 
 ## Pipeline
 
@@ -158,9 +164,10 @@ Absolute paths and snapshot locations do not participate.
 Compiler-libs is deliberately private to the executable implementation because
 Typedtree APIs can change between OCaml releases. Windows, Linux, and macOS with
 OCaml 5.4–5.5 are the target matrix. Local Windows component, fixture, schema,
-and catalog-determinism gates are evidenced; the complete Balanced self-run,
-pinned corpus, directory-capability migration, and cross-OS gates remain
-outstanding. No dynamic operator ABI is offered in 0.1.
+catalog-determinism, and live event-to-TUI cancellation gates are evidenced;
+the complete Balanced self-run, pinned corpus, directory-capability migration,
+three-OS PTY/ConPTY validation, and cross-OS gates remain release gates. No
+dynamic operator ABI is offered in 1.0.
 
 The engine boundary is OCaml-native. Typedtree witnesses, resolved identifiers,
 Dune workspace evidence, mutation rendering, process supervision, and cache
@@ -168,7 +175,7 @@ proofs are not abstractions shared with another language implementation.
 Language-independent interoperability is instead provided at the report
 boundary.
 
-`ocaml-mutants.run-report-v1` is the authoritative record of the complete
+`ocaml-mutants.run-report-v2` is the authoritative record of the complete
 modeled engine state for a run; process stdout and stderr remain intentionally
 bounded captures. It drives exit policy, expectation checks, diagnostics,
 replay, and cache decisions. A Stryker Mutation Testing Report Schema v2

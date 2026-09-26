@@ -3,5 +3,10 @@
  (package ocaml-mutants)
  (files
   catalog-v1.schema.json
+  catalog-v2.schema.json
+  check-report-v1.schema.json
+  event-v1.schema.json
+  shard-plan-v1.schema.json
   run-report-v1.schema.json
+  run-report-v2.schema.json
   mutation-testing-report-v2.schema.json))

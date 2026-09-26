@@ -14,7 +14,9 @@
   threads
   compiler-libs.common
   digestif
-  yojson)
+  yojson
+  matrix
+  mosaic)
  (foreign_stubs
   (language c)
-  (names process_stubs signal_stubs dir_cap_stubs)))
+  (names process_stubs signal_stubs dir_cap_stubs terminal_stubs)))

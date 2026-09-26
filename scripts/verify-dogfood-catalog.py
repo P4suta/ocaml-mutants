@@ -45,9 +45,9 @@ def read_catalog(path: Path) -> dict[str, Any]:
         raise CatalogError(f"cannot decode {path}: {error}") from error
     if not isinstance(value, dict):
         raise CatalogError(f"{path}: catalog root must be an object")
-    if value.get("document_type") != "ocaml-mutants.catalog-v1":
+    if value.get("document_type") != "ocaml-mutants.catalog-v2":
         raise CatalogError(f"{path}: unexpected document_type")
-    if value.get("schema_version") != 1:
+    if value.get("schema_version") != 2:
         raise CatalogError(f"{path}: unexpected schema_version")
     return value
 

@@ -75,7 +75,7 @@ def read_pinned_stryker_schema(schema_path, license_path, provenance_path):
     return json.loads(schema_path.read_text(encoding="utf-8"))
 
 
-def run(command, cwd, env):
+def run(command, cwd, env, accepted_returncodes=(0,)):
     completed = subprocess.run(
         command,
         cwd=cwd,
@@ -85,12 +85,30 @@ def run(command, cwd, env):
         stderr=subprocess.PIPE,
         check=False,
     )
-    if completed.returncode not in (0, 1):
+    if completed.returncode not in accepted_returncodes:
         raise AssertionError(
             f"command failed ({completed.returncode}): {' '.join(command)}\n"
             f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
         )
-    return json.loads(completed.stdout)
+    return json.loads(completed.stdout), completed.returncode
+
+
+def run_jsonl(command, cwd, env):
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(
+            f"command failed ({completed.returncode}): {' '.join(command)}\n"
+            f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+        )
+    return [json.loads(line) for line in completed.stdout.splitlines() if line]
 
 
 def main():
@@ -99,21 +117,69 @@ def main():
     fixture = str(fixture_project.parent)
     catalog_schema = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
     report_schema = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
+    check_schema = json.loads(Path(sys.argv[5]).read_text(encoding="utf-8"))
+    event_schema = json.loads(Path(sys.argv[6]).read_text(encoding="utf-8"))
+    shard_schema = json.loads(Path(sys.argv[7]).read_text(encoding="utf-8"))
     stryker_surface_schema = json.loads(
-        Path(sys.argv[5]).read_text(encoding="utf-8")
+        Path(sys.argv[8]).read_text(encoding="utf-8")
     )
     official_stryker_schema = read_pinned_stryker_schema(
-        Path(sys.argv[6]), Path(sys.argv[7]), Path(sys.argv[8])
+        Path(sys.argv[9]), Path(sys.argv[10]), Path(sys.argv[11])
     )
-    stryker_fixture = json.loads(Path(sys.argv[9]).read_text(encoding="utf-8"))
+    stryker_fixture = json.loads(Path(sys.argv[12]).read_text(encoding="utf-8"))
     catalog_validator = checked_validator(catalog_schema)
     report_validator = checked_validator(report_schema)
+    check_validator = checked_validator(check_schema)
+    event_validator = checked_validator(event_schema)
+    shard_validator = checked_validator(shard_schema)
     stryker_surface_validator = checked_validator(stryker_surface_schema)
     official_stryker_validator = checked_validator(official_stryker_schema)
     stryker_validators = (
         official_stryker_validator,
         stryker_surface_validator,
     )
+
+    progress_event = {
+        "document_type": "ocaml-mutants.event-v1",
+        "schema_version": 1,
+        "sequence": 0,
+        "timestamp": "20260101T000000Z",
+        "type": "progress",
+        "payload": {
+            "phase": "mutation",
+            "completed": 1,
+            "total": 2,
+            "workers": 1,
+            "cache_hits": 0,
+            "resume_hits": 0,
+            "elapsed_seconds": 0.5,
+            "eta_seconds": 0.5,
+        },
+    }
+    event_validator.validate(progress_event)
+    invalid_events = [
+        {
+            **progress_event,
+            "payload": {**progress_event["payload"], "unexpected": True},
+        },
+        {
+            **progress_event,
+            "payload": {
+                key: value
+                for key, value in progress_event["payload"].items()
+                if key != "workers"
+            },
+        },
+        {**progress_event, "type": "warning"},
+    ]
+    for invalid_event in invalid_events:
+        try:
+            event_validator.validate(invalid_event)
+        except jsonschema.exceptions.ValidationError:
+            pass
+        else:
+            raise AssertionError("event-v1 accepted a non-strict payload")
+
     for validator in stryker_validators:
         validator.validate(stryker_fixture)
 
@@ -134,10 +200,13 @@ def main():
         env = os.environ.copy()
         env["LOCALAPPDATA"] = cache
         env["XDG_CACHE_HOME"] = cache
-        catalog = run([cli, "list", "--json", "--no-color"], fixture, env)
+        catalog, catalog_exit = run(
+            [cli, "list", "--json", "--no-color"], fixture, env
+        )
+        assert catalog_exit == 0
         catalog_validator.validate(catalog)
 
-        report = run(
+        report, report_exit = run(
             [
                 cli,
                 "run",
@@ -156,6 +225,7 @@ def main():
             fixture,
             env,
         )
+        assert report_exit == 0
         report_validator.validate(report)
         summary = report["summary"]
         assert summary["total"] == summary["executed"] + summary["not_run"]
@@ -169,7 +239,51 @@ def main():
             derived = 100.0 * summary["detected"] / scoreable
             assert abs(summary["score"] - derived) < 1e-9
 
-        stryker_report = run(
+        check, check_exit = run(
+            [cli, "check", "--json"],
+            fixture,
+            env,
+            accepted_returncodes=(0, 1, 2),
+        )
+        check_validator.validate(check)
+        if report["evidence"]["level"] == "estimated":
+            expected_check_exit = 2
+        elif summary["unexpected_survivors"] > 0:
+            expected_check_exit = 1
+        else:
+            expected_check_exit = 0
+        assert check["exit_code"] == expected_check_exit
+        assert check_exit == expected_check_exit
+
+        plan, plan_exit = run([cli, "plan", "--shards", "2"], fixture, env)
+        assert plan_exit == 0
+        shard_validator.validate(plan)
+
+        events = run_jsonl(
+            [
+                cli,
+                "run",
+                "--fresh",
+                "--jobs",
+                "1",
+                "--timeout",
+                FIXTURE_TIMEOUT_SECONDS,
+                "--events",
+                "jsonl",
+                "--",
+                "dune",
+                "exec",
+                "./check.exe",
+            ],
+            fixture,
+            env,
+        )
+        assert events
+        for sequence, event in enumerate(events):
+            event_validator.validate(event)
+            assert event["sequence"] == sequence
+
+        stryker_report, stryker_exit = run(
             [
                 cli,
                 "run",
@@ -192,6 +306,7 @@ def main():
             fixture,
             env,
         )
+        assert stryker_exit == 0
         for validator in stryker_validators:
             validator.validate(stryker_report)
         paths = list(stryker_report["files"])
@@ -200,9 +315,10 @@ def main():
             mutant_ids = [mutant["id"] for mutant in file_report["mutants"]]
             assert mutant_ids == sorted(mutant_ids)
 
-        native_after_projection = run(
+        native_after_projection, native_exit = run(
             [cli, "report", "--json", "--no-color"], fixture, env
         )
+        assert native_exit == 0
         report_validator.validate(native_after_projection)
         native_ids = {
             result["mutant"]["full_id"]

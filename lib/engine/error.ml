@@ -28,14 +28,78 @@ type kind = Usage | Baseline | Tool | Process | Interrupted
 type t = {
   phase : phase;
   cause : cause;
+  code : string;
+  remediation : string;
   message : string;
   context : (string * string) list;
   suppressed : t list;
 }
 
-let create ~phase ~cause ?(context = []) format =
+let phase_code = function
+  | Cli -> "CLI"
+  | Snapshot -> "SNAPSHOT"
+  | Dune -> "DUNE"
+  | Analysis -> "ANALYSIS"
+  | Baseline_proof -> "BASELINE"
+  | Instrumentation -> "INSTRUMENTATION"
+  | Ready_proof -> "READINESS"
+  | Execution -> "EXECUTION"
+  | Cache -> "CACHE"
+  | Reporting -> "REPORTING"
+  | Cleanup -> "CLEANUP"
+
+let cause_code = function
+  | Invalid_input -> "INVALID_INPUT"
+  | Workspace_violation -> "WORKSPACE_VIOLATION"
+  | Decode_failure -> "DECODE_FAILURE"
+  | Process_failure -> "PROCESS_FAILURE"
+  | Baseline_failure -> "BASELINE_FAILURE"
+  | Invariant_violation -> "INVARIANT_VIOLATION"
+  | Resource_busy -> "RESOURCE_BUSY"
+  | Io_failure -> "IO_FAILURE"
+  | Corrupt_cache -> "CORRUPT_CACHE"
+  | Interrupted_by_user -> "INTERRUPTED"
+
+let default_code phase cause =
+  Printf.sprintf "OM_%s_%s" (phase_code phase) (cause_code cause)
+
+let default_remediation = function
+  | Invalid_input ->
+      "Run the command with --help and correct the invalid input."
+  | Workspace_violation ->
+      "Restore the workspace path or permissions, then retry without changing \
+       the snapshot."
+  | Decode_failure ->
+      "Validate the referenced config or report against its versioned schema."
+  | Process_failure ->
+      "Re-run with --verbose and inspect the captured process output."
+  | Baseline_failure ->
+      "Make the configured baseline test stages pass, then retry."
+  | Invariant_violation ->
+      "Preserve the report and owner-private log, then report this as a tool \
+       defect."
+  | Resource_busy ->
+      "Wait for the active run or maintenance operation to finish."
+  | Io_failure ->
+      "Check the reported path, free space, and permissions, then retry."
+  | Corrupt_cache ->
+      "Run `ocaml-mutants cache gc`; use clean only if corruption remains."
+  | Interrupted_by_user ->
+      "Re-run the command to resume from its last checkpoint."
+
+let create ~phase ~cause ?code ?remediation ?(context = []) format =
   Format.kasprintf
-    (fun message -> { phase; cause; message; context; suppressed = [] })
+    (fun message ->
+      {
+        phase;
+        cause;
+        code = Option.value code ~default:(default_code phase cause);
+        remediation =
+          Option.value remediation ~default:(default_remediation cause);
+        message;
+        context;
+        suppressed = [];
+      })
     format
 
 let make kind format =
@@ -55,11 +119,19 @@ let with_context key value error =
 let suppress primary cleanup =
   { primary with suppressed = primary.suppressed @ [ cleanup ] }
 
+let restore_with_details ~phase ~cause ~code ~remediation ~message ~context
+    ~suppressed =
+  { phase; cause; code; remediation; message; context; suppressed }
+
 let restore ~phase ~cause ~message ~context ~suppressed =
-  { phase; cause; message; context; suppressed }
+  restore_with_details ~phase ~cause ~code:(default_code phase cause)
+    ~remediation:(default_remediation cause)
+    ~message ~context ~suppressed
 
 let phase error = error.phase
 let cause error = error.cause
+let code error = error.code
+let remediation error = error.remediation
 let message error = error.message
 let context error = error.context
 let suppressed error = error.suppressed
@@ -120,11 +192,13 @@ let exit_code error =
   match error.cause with Interrupted_by_user -> 130 | _ -> 2
 
 let rec pp formatter error =
-  Format.fprintf formatter "[%s/%s] %s" (phase_name error.phase)
+  Format.fprintf formatter "[%s %s/%s] %s" error.code (phase_name error.phase)
     (cause_name error.cause) error.message;
   List.iter
     (fun (key, value) -> Format.fprintf formatter "@,  %s: %s" key value)
     error.context;
+  if error.remediation <> "" then
+    Format.fprintf formatter "@,  next: %s" error.remediation;
   List.iter
     (fun suppressed ->
       Format.fprintf formatter "@,  suppressed cleanup error: %a" pp suppressed)

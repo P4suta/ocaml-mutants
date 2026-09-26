@@ -185,6 +185,18 @@ let original mutant = mutant.original
 let replacement mutant = mutant.replacement
 let source_digest mutant = mutant.source_digest
 
+let lineage_id mutant =
+  let open Identity_sexp in
+  List
+    [
+      Atom "ocaml-mutants-lineage-id-v1";
+      Atom mutant.path;
+      Atom (Operator.Rule.stable_name mutant.rule);
+      Atom (sha256 mutant.original);
+      Atom (sha256 mutant.replacement);
+    ]
+  |> Canonical.to_string |> sha256
+
 let equal_identity left right =
   Id.equal left.id right.id
   && String.equal left.path right.path

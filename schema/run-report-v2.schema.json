@@ -1,0 +1,419 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/P4suta/ocaml-mutants/schema/run-report-v2.schema.json",
+  "title": "ocaml-mutants run-report-v2",
+  "type": "object",
+  "required": ["document_type", "schema_version", "run_id", "status", "started_at", "finished_at", "workspace", "resolved_config", "input_fingerprint", "profile", "selection", "test", "cache", "summary", "evidence", "mutants", "not_run", "expectations", "failure", "skips", "warnings"],
+  "properties": {
+    "document_type": { "const": "ocaml-mutants.run-report-v2" },
+    "schema_version": { "const": 2 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["completed", "interrupted", "failed"] },
+    "started_at": { "type": "string", "minLength": 1 },
+    "finished_at": { "type": "string", "minLength": 1 },
+    "workspace": {
+      "type": "object",
+      "required": ["digest", "toolchain"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/digest" },
+        "toolchain": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "resolved_config": {
+      "type": "object",
+      "required": ["version", "mutation", "test", "execution", "cache", "policy", "report", "privacy"],
+      "properties": {
+        "version": { "const": 2 },
+        "mutation": {
+          "type": "object",
+          "required": ["profile", "include", "exclude", "operators", "expectations"],
+          "properties": {
+            "profile": { "enum": ["balanced", "strong", "all"] },
+            "include": { "type": "array", "items": { "type": "string" } },
+            "exclude": { "type": "array", "items": { "type": "string" } },
+            "operators": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "expectations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "reason"],
+                "properties": {
+                  "id": { "$ref": "#/$defs/digest" },
+                  "reason": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "test": {
+          "type": "object",
+          "required": ["driver", "command", "stages", "timeout_seconds", "baseline_runs", "parallel_safe", "external_inputs", "reproducible"],
+          "properties": {
+            "driver": { "enum": ["auto", "dune", "command"] },
+            "command": { "$ref": "#/$defs/command" },
+            "stages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/config_stage" } },
+            "timeout_seconds": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+            "baseline_runs": { "type": "integer", "minimum": 1 },
+            "parallel_safe": { "type": "boolean" },
+            "external_inputs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "reproducible": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "execution": {
+          "type": "object",
+          "required": ["mode", "jobs"],
+          "properties": {
+            "mode": { "enum": ["strict", "fast"] },
+            "jobs": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "cache": {
+          "type": "object",
+          "required": ["mode", "directory", "historical_reuse"],
+          "properties": {
+            "mode": { "enum": ["auto", "on", "off"] },
+            "directory": { "type": ["string", "null"] },
+            "historical_reuse": { "enum": ["off", "exact", "estimated"] }
+          },
+          "additionalProperties": false
+        },
+        "policy": {
+          "type": "object",
+          "required": ["require_complete", "max_unexpected_survivors", "minimum_score", "maximum_score_drop", "allow_estimated"],
+          "properties": {
+            "require_complete": { "type": "boolean" },
+            "max_unexpected_survivors": { "type": "integer", "minimum": 0 },
+            "minimum_score": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+            "maximum_score_drop": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+            "allow_estimated": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "report": {
+          "type": "object",
+          "required": ["formats", "directory"],
+          "properties": {
+            "formats": {
+              "type": "array",
+              "items": { "enum": ["terminal", "json", "html", "markdown", "sarif", "stryker"] },
+              "uniqueItems": true
+            },
+            "directory": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "privacy": {
+          "type": "object",
+          "required": ["stdout_limit_bytes", "stderr_limit_bytes", "redactions", "source_embedding"],
+          "properties": {
+            "stdout_limit_bytes": { "type": "integer", "minimum": 0 },
+            "stderr_limit_bytes": { "type": "integer", "minimum": 0 },
+            "redactions": { "type": "array", "items": { "const": "<redacted>" } },
+            "source_embedding": { "enum": ["context", "all", "none"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "input_fingerprint": {
+      "type": "object",
+      "required": ["digest", "workspace_digest", "toolchain", "config_digest"],
+      "properties": {
+        "digest": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "const": "unavailable" }] },
+        "workspace_digest": { "$ref": "#/$defs/digest" },
+        "toolchain": { "type": "string" },
+        "config_digest": { "$ref": "#/$defs/digest" }
+      },
+      "additionalProperties": false
+    },
+    "profile": { "enum": ["balanced", "strong", "all"] },
+    "selection": {
+      "type": "object",
+      "required": ["description"],
+      "properties": { "description": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "test": {
+      "type": "object",
+      "required": ["command", "baseline_duration_seconds", "timeout_seconds", "stages", "inventory"],
+      "properties": {
+        "command": { "$ref": "#/$defs/command" },
+        "baseline_duration_seconds": { "type": ["number", "null"], "minimum": 0 },
+        "timeout_seconds": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "stages": { "type": "array", "items": { "$ref": "#/$defs/baseline_stage" } },
+        "inventory": {
+          "type": "object",
+          "required": ["state", "tests", "hit_map"],
+          "properties": {
+            "state": { "enum": ["unavailable", "stage-level", "test-level"] },
+            "tests": { "type": "array", "items": { "type": "string" } },
+            "hit_map": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["test", "mutant_ids"],
+                "properties": {
+                  "test": { "type": "string", "minLength": 1 },
+                  "mutant_ids": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/digest" },
+                    "uniqueItems": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "cache": {
+      "type": "object",
+      "required": ["mode", "key"],
+      "properties": {
+        "mode": { "enum": ["auto", "on", "off", "estimated"] },
+        "key": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "const": "unavailable" }] }
+      },
+      "additionalProperties": false
+    },
+    "summary": { "$ref": "#/$defs/summary" },
+    "evidence": {
+      "type": "object",
+      "required": ["level", "complete", "executed", "exact_cache", "estimated", "checkpointed", "resumed"],
+      "properties": {
+        "level": { "$ref": "#/$defs/evidence_level" },
+        "complete": { "type": "boolean" },
+        "executed": { "type": "integer", "minimum": 0 },
+        "exact_cache": { "type": "integer", "minimum": 0 },
+        "estimated": { "type": "integer", "minimum": 0 },
+        "checkpointed": { "type": "integer", "minimum": 0 },
+        "resumed": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "mutants": { "type": "array", "items": { "$ref": "#/$defs/result" } },
+    "not_run": { "type": "array", "items": { "$ref": "#/$defs/mutant" } },
+    "expectations": { "type": "array", "items": { "$ref": "#/$defs/expectation_evaluation" } },
+    "failure": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/failure" }] },
+    "skips": { "type": "array", "items": { "$ref": "#/$defs/skip" } },
+    "warnings": { "type": "array", "items": { "$ref": "#/$defs/warning" } }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "evidence_level": { "enum": ["executed", "exact-cache", "estimated"] },
+    "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "config_stage": {
+      "type": "object",
+      "required": ["name", "command"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "command": { "$ref": "#/$defs/command" }
+      },
+      "additionalProperties": false
+    },
+    "range": {
+      "type": "object",
+      "required": ["start_byte", "end_byte", "start_line", "start_column", "end_line", "end_column"],
+      "properties": {
+        "start_byte": { "type": "integer", "minimum": 0 },
+        "end_byte": { "type": "integer", "minimum": 1 },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "start_column": { "type": "integer", "minimum": 0 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "end_column": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "mutant": {
+      "type": "object",
+      "required": ["id", "full_id", "lineage_id", "path", "range", "family", "rule", "original", "replacement", "source_digest"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+        "full_id": { "$ref": "#/$defs/digest" },
+        "lineage_id": { "$ref": "#/$defs/digest" },
+        "path": { "type": "string", "minLength": 1 },
+        "range": { "$ref": "#/$defs/range" },
+        "family": { "type": "string", "minLength": 1 },
+        "rule": { "type": "string", "pattern": "^[a-z0-9-]+@[1-9][0-9]*$" },
+        "original": { "type": "string", "minLength": 1 },
+        "replacement": { "type": "string", "minLength": 1 },
+        "source_digest": { "$ref": "#/$defs/digest" }
+      },
+      "additionalProperties": false
+    },
+    "captured": {
+      "type": "object",
+      "required": ["contents", "truncated", "total_bytes"],
+      "properties": {
+        "contents": { "type": "string" },
+        "truncated": { "type": "boolean" },
+        "total_bytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "stage_result": {
+      "type": "object",
+      "required": ["name", "status", "duration_seconds"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "minLength": 1 },
+        "duration_seconds": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "attempt": {
+      "type": "object",
+      "required": ["outcome", "error", "duration_seconds", "stages", "stdout", "stderr"],
+      "properties": {
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "error": { "type": ["string", "null"] },
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "stages": { "type": "array", "items": { "$ref": "#/$defs/stage_result" } },
+        "stdout": { "$ref": "#/$defs/captured" },
+        "stderr": { "$ref": "#/$defs/captured" }
+      },
+      "additionalProperties": false
+    },
+    "baseline_stage": {
+      "type": "object",
+      "required": ["name", "command", "baseline_runs_seconds", "slowest_baseline_seconds"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "command": { "$ref": "#/$defs/command" },
+        "baseline_runs_seconds": { "type": "array", "minItems": 1, "items": { "type": "number", "minimum": 0 } },
+        "slowest_baseline_seconds": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "outcome": { "enum": ["killed", "survived", "timeout", "inconclusive", "error"] },
+    "expectation": {
+      "type": "object",
+      "required": ["reason", "status", "detail"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["fulfilled", "unfulfilled-killed", "unfulfilled-confirmed-timeout", "inconclusive", "error"] },
+        "detail": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "expectation_evaluation": {
+      "type": "object",
+      "required": ["mutant_id", "reason", "status", "detail"],
+      "properties": {
+        "mutant_id": { "$ref": "#/$defs/digest" },
+        "reason": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["fulfilled", "unfulfilled-killed", "unfulfilled-confirmed-timeout", "inconclusive", "error", "stale", "not-evaluated"] },
+        "detail": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "timeout_retry": {
+      "type": "object",
+      "required": ["initial_timeout", "serial_retry"],
+      "properties": {
+        "initial_timeout": { "$ref": "#/$defs/attempt" },
+        "serial_retry": { "$ref": "#/$defs/attempt" }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": ["mutant", "outcome", "error", "duration_seconds", "cached", "evidence", "attempts", "killing_test", "coverage", "checkpoint", "stages", "timeout_confirmed", "timeout_retry", "expected_survivor", "expectation", "stdout", "stderr"],
+      "properties": {
+        "mutant": { "$ref": "#/$defs/mutant" },
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "error": { "type": ["string", "null"] },
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "cached": { "type": "boolean" },
+        "evidence": {
+          "type": "object",
+          "required": ["level", "origin", "estimated"],
+          "properties": {
+            "level": { "$ref": "#/$defs/evidence_level" },
+            "origin": { "enum": ["execution", "checkpoint-resume", "checkpoint-estimated", "historical-exact", "historical-estimated", "fast-estimated"] },
+            "estimated": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "attempts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/attempt" } },
+        "killing_test": { "type": ["string", "null"] },
+        "coverage": { "enum": ["covered", "not-covered", "unknown"] },
+        "checkpoint": {
+          "type": "object",
+          "required": ["settled", "resumed"],
+          "properties": { "settled": { "const": true }, "resumed": { "type": "boolean" } },
+          "additionalProperties": false
+        },
+        "stages": { "type": "array", "items": { "$ref": "#/$defs/stage_result" } },
+        "timeout_confirmed": { "type": "boolean" },
+        "timeout_retry": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/timeout_retry" }] },
+        "expected_survivor": { "type": "boolean" },
+        "expectation": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/expectation" }] },
+        "stdout": { "$ref": "#/$defs/captured" },
+        "stderr": { "$ref": "#/$defs/captured" }
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["kind", "total", "executed", "not_run", "killed", "survived", "timeout", "unconfirmed_timeouts", "inconclusive", "error", "expected_survivors", "unexpected_survivors", "unfulfilled_expectations", "detected", "score"],
+      "properties": {
+        "kind": { "enum": ["complete", "partial"] },
+        "total": { "type": "integer", "minimum": 0 },
+        "executed": { "type": "integer", "minimum": 0 },
+        "not_run": { "type": "integer", "minimum": 0 },
+        "killed": { "type": "integer", "minimum": 0 },
+        "survived": { "type": "integer", "minimum": 0 },
+        "timeout": { "type": "integer", "minimum": 0 },
+        "unconfirmed_timeouts": { "type": "integer", "minimum": 0 },
+        "inconclusive": { "type": "integer", "minimum": 0 },
+        "error": { "type": "integer", "minimum": 0 },
+        "expected_survivors": { "type": "integer", "minimum": 0 },
+        "unexpected_survivors": { "type": "integer", "minimum": 0 },
+        "unfulfilled_expectations": { "type": "integer", "minimum": 0 },
+        "detected": { "type": "integer", "minimum": 0 },
+        "score": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+      },
+      "additionalProperties": false
+    },
+    "failure": {
+      "type": "object",
+      "required": ["phase", "cause", "code", "message", "remediation", "context", "suppressed"],
+      "properties": {
+        "phase": { "type": "string" },
+        "cause": { "type": "string" },
+        "code": { "type": "string", "pattern": "^OM_[A-Z_]+$" },
+        "message": { "type": "string" },
+        "remediation": { "type": "string" },
+        "context": { "type": "object", "additionalProperties": { "type": "string" } },
+        "suppressed": { "type": "array", "items": { "$ref": "#/$defs/failure" } }
+      },
+      "additionalProperties": false
+    },
+    "skip": {
+      "type": "object",
+      "required": ["reason", "count", "examples"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "count": { "type": "integer", "minimum": 1 },
+        "examples": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "additionalProperties": false
+    },
+    "warning": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": { "code": { "type": "string", "minLength": 1 }, "message": { "type": "string" } },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

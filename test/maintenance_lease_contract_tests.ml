@@ -17,6 +17,9 @@ let command =
   | Error message -> failwith message
 
 let report id : Engine.Run_store.run =
+  let resolved_config, config_digest =
+    Fixtures.config_evidence Engine.Config.defaults
+  in
   {
     metadata =
       {
@@ -30,12 +33,19 @@ let report id : Engine.Run_store.run =
         test_command = command;
         baseline_duration = None;
         baseline_stages = [];
+        hit_map = [];
         timeout = None;
         cache_mode = "off";
+        execution_mode = "strict";
+        historical_reuse = "off";
         cache_key = "unavailable";
+        resolved_config;
+        input_fingerprint = "unavailable";
+        config_digest;
       };
     status = Engine.Run_store.Completed;
     results = [];
+    checkpointed = 0;
     completeness = Engine.Run_store.Complete;
     expectations = [];
     skipped = [];

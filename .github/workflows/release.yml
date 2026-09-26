@@ -7,26 +7,43 @@ on:
 permissions:
   contents: read
 
-# Retry transient opam source downloads instead of failing the job.
 env:
   OPAMRETRIES: "3"
 
 jobs:
-  gates:
+  build-and-package:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            archive-format: tar.gz
+          - os: windows-latest
+            target: windows-x86_64
+            archive-format: zip
+          - os: macos-15
+            target: macos-arm64
+            archive-format: tar.gz
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE: "1"
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Tag matches the dune-project version
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag matches the package version
         run: |
+          set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           grep -Fq "(version $version)" dune-project
+          printf 'RELEASE_VERSION=%s\n' "$version" >> "$GITHUB_ENV"
+          printf 'SOURCE_DATE_EPOCH=%s\n' "$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
@@ -37,33 +54,109 @@ jobs:
       - run: python -m pip install --requirement requirements-dev.txt
       - run: opam install . --deps-only --with-test --with-doc
       - run: opam install ocamlformat.0.28.1 -y
-      - run: opam exec -- dune build @all
+      - run: opam exec -- dune build @all @fmt @doc @install
       - run: opam exec -- dune runtest
-      - run: opam exec -- dune build @schema-validation
-      - run: opam exec -- dune build @dogfood-fast
-      - run: opam exec -- dune build @fmt
-      - run: opam exec -- dune build @doc
-      - run: opam exec -- dune build @install
+      - run: opam exec -- dune build @schema-validation @dogfood-fast
       - run: opam lint ocaml-mutants.opam
-      - name: CLI reports the tagged version
+      - name: Verify install surface and CLI version
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          test "$(opam exec -- dune exec bin/main.exe -- --version)" = "$version"
+          set -euo pipefail
+          python scripts/verify-install-layout.py _build/install/default
+          test "$(opam exec -- dune exec bin/main.exe -- --version)" = "$RELEASE_VERSION"
+      - name: Create deterministic release archive
+        run: >-
+          python scripts/package-release.py
+          --install-root _build/install/default
+          --output-dir release-assets
+          --version "$RELEASE_VERSION"
+          --target "${{ matrix.target }}"
+          --format "${{ matrix.archive-format }}"
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: _build/install/default
+          format: spdx-json
+          output-file: release-assets/ocaml-mutants-${{ env.RELEASE_VERSION }}-${{ matrix.target }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Upload release inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.target }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
 
-  draft-release:
-    needs: gates
+  exhaustive-acceptance:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 360
+    env:
+      OCAML_MUTANTS_DIRCAP_REQUIRE_NATIVE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Create a draft GitHub release
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
+        with:
+          ocaml-compiler: "5.5.0"
+          dune-cache: true
+      - run: python -m pip install --requirement requirements-dev.txt
+      - run: opam install . --deps-only --with-test --with-doc
+      - name: Strict self-dogfood
+        run: opam exec -- sh scripts/dogfood.sh
+      - name: Pinned corpus acceptance
+        run: opam exec -- python -B scripts/corpus_gate.py run --manifest scripts/corpus-v1.toml
+
+  publish:
+    needs: [build-and-package, exhaustive-acceptance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download all verified release inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify release set and write SHA-256 manifest
+        working-directory: release-assets
+        run: |
+          set -euo pipefail
+          test "$(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)" -eq 3
+          test "$(find . -maxdepth 1 -type f -name '*.spdx.json' | wc -l)" -eq 3
+          sha256sum -- *.tar.gz *.zip *.spdx.json | LC_ALL=C sort -k2 > SHA256SUMS
+      - name: Sign archives, SBOMs, and checksum manifest
+        uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
+        with:
+          inputs: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+            release-assets/*.spdx.json
+            release-assets/SHA256SUMS
+          release-signing-artifacts: false
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+            release-assets/*.spdx.json
+            release-assets/SHA256SUMS
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag
-          --title "ocaml-mutants $GITHUB_REF_NAME" --generate-notes
-
-# The draft stays unpublished on purpose: docs/release-checklist.md items that
-# cannot run here (the complete Balanced self-dogfood, the pinned corpus gate,
-# cross-OS acceptance, the opam-repository submission) remain manual.
+          gh release create "$GITHUB_REF_NAME" release-assets/*
+          --verify-tag --title "ocaml-mutants $GITHUB_REF_NAME"
+          --generate-notes

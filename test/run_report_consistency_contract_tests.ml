@@ -46,6 +46,7 @@ let result ?expected_reason mutant outcome : Engine.Run_store.mutant_result =
     outcome;
     duration = duration 0.1;
     cached = false;
+    evidence_origin = Engine.Run_store.Execution;
     stages = [];
     timeout_confirmed = false;
     timeout_retry = None;
@@ -57,6 +58,9 @@ let result ?expected_reason mutant outcome : Engine.Run_store.mutant_result =
 let expected_reason = "equivalent by construction"
 
 let metadata id : Engine.Run_store.metadata =
+  let resolved_config, config_digest =
+    Fixtures.config_evidence Engine.Config.defaults
+  in
   {
     id;
     started_at = "2026-01-01T00:00:00Z";
@@ -76,9 +80,21 @@ let metadata id : Engine.Run_store.metadata =
           slowest = duration 0.3;
         };
       ];
+    hit_map =
+      [
+        {
+          Engine.Run_store.test = "full";
+          mutant_ids = [ Core.Mutant.Id.full (Core.Mutant.id expected_mutant) ];
+        };
+      ];
     timeout = Some (duration 10.);
     cache_mode = "off";
+    execution_mode = "strict";
+    historical_reuse = "off";
     cache_key = String.make 64 'b';
+    resolved_config;
+    input_fingerprint = String.make 64 'b';
+    config_digest;
   }
 
 let run_id =
@@ -97,6 +113,7 @@ let base_run () : Engine.Run_store.run =
         result ~expected_reason expected_mutant Core.Outcome.Survived;
         result killed_mutant Core.Outcome.Killed;
       ];
+    checkpointed = 2;
     completeness = Engine.Run_store.Partial [ pending_mutant ];
     expectations =
       [
@@ -180,10 +197,12 @@ let test_completeness_round_trip () =
           partial.metadata with
           baseline_duration = None;
           baseline_stages = [];
+          hit_map = [];
           timeout = None;
         };
       status = Engine.Run_store.Failed failure;
       results = [];
+      checkpointed = 0;
       completeness = Engine.Run_store.Partial [];
       expectations = [];
     }
@@ -232,6 +251,13 @@ let test_summary_is_derived () =
     (map_member "summary" (replace_member "score" (`Float 250.0)) encoded);
   reject "unknown summary kind"
     (map_member "summary" (replace_member "kind" (`String "unknown")) encoded)
+
+let test_evidence_counters_are_derived () =
+  let encoded = Engine.Run_store.run_to_yojson (base_run ()) in
+  reject "checkpoint count above result count"
+    (map_member "evidence" (replace_member "checkpointed" (`Int 3)) encoded);
+  reject "changed executed evidence count"
+    (map_member "evidence" (replace_member "executed" (`Int 1)) encoded)
 
 let test_status_and_failure_are_consistent () =
   let run = base_run () in
@@ -329,6 +355,15 @@ let test_baseline_evidence_is_self_consistent () =
          test
          |> replace_member "stages" (`List [])
          |> replace_member "baseline_duration_seconds" (`Float 0.3))
+       encoded);
+  reject "hit-map names an unrecorded stage"
+    (map_member "test"
+       (map_member "inventory"
+          (map_first "hit_map" (replace_member "test" (`String "unknown"))))
+       encoded);
+  reject "coverage contradicts hit-map evidence"
+    (map_first "mutants"
+       (replace_member "coverage" (`String "not-covered"))
        encoded)
 
 let test_derived_mutant_fields_are_validated () =
@@ -347,6 +382,41 @@ let test_derived_mutant_fields_are_validated () =
        (change_mutant "family" (`String "comparison"))
        encoded)
 
+let test_report_redactions_are_opaque () =
+  let config =
+    {
+      Engine.Config.defaults with
+      privacy =
+        { Engine.Config.defaults.privacy with redactions = [ "private-token" ] };
+    }
+  in
+  let resolved_config, config_digest =
+    Fixtures.config_evidence ~encode:Engine.Config.to_report_yojson config
+  in
+  let base = base_run () in
+  let run =
+    {
+      base with
+      metadata = { base.metadata with resolved_config; config_digest };
+    }
+  in
+  check_round_trip "opaque report redactions" run;
+  let encoded = Engine.Run_store.run_to_yojson run in
+  let exposed =
+    map_member "resolved_config"
+      (map_member "privacy"
+         (replace_member "redactions" (`List [ `String "private-token" ])))
+      encoded
+  in
+  let exposed_config = Yojson.Safe.Util.member "resolved_config" exposed in
+  let exposed_digest =
+    Engine.Util.sha256 (Yojson.Safe.to_string ~std:true exposed_config)
+  in
+  reject "report exposes a privacy literal"
+    (map_member "input_fingerprint"
+       (replace_member "config_digest" (`String exposed_digest))
+       exposed)
+
 let test_execution_evidence_is_self_consistent () =
   let run = base_run () in
   let attempt : Engine.Run_store.retry_attempt =
@@ -364,6 +434,7 @@ let test_execution_evidence_is_self_consistent () =
       outcome = Core.Outcome.Timeout;
       duration = duration 0.2;
       cached = false;
+      evidence_origin = Engine.Run_store.Execution;
       stages = [];
       timeout_confirmed = true;
       timeout_retry =
@@ -405,6 +476,18 @@ let test_execution_evidence_is_self_consistent () =
   reject "untruncated output byte count contradicts retained output"
     (map_first "mutants"
        (map_member "stdout" (replace_member "total_bytes" (`Int 99)))
+       encoded);
+  reject "evidence level contradicts origin"
+    (map_first "mutants"
+       (map_member "evidence" (replace_member "level" (`String "estimated")))
+       encoded);
+  reject "estimated marker contradicts origin"
+    (map_first "mutants"
+       (map_member "evidence" (replace_member "estimated" (`Bool true)))
+       encoded);
+  reject "checkpoint marker contradicts origin"
+    (map_first "mutants"
+       (map_member "checkpoint" (replace_member "resumed" (`Bool true)))
        encoded)
 
 let timed_out_mutant =
@@ -442,6 +525,8 @@ let () =
           Alcotest.test_case "complete and partial witnesses round trip" `Quick
             test_completeness_round_trip;
           Alcotest.test_case "summary is derived" `Quick test_summary_is_derived;
+          Alcotest.test_case "evidence counters are derived" `Quick
+            test_evidence_counters_are_derived;
           Alcotest.test_case "unconfirmed timeout is not detected" `Quick
             test_unconfirmed_timeout_is_not_detected;
           Alcotest.test_case "status matches failure" `Quick
@@ -454,6 +539,8 @@ let () =
             test_baseline_evidence_is_self_consistent;
           Alcotest.test_case "derived mutant fields are validated" `Quick
             test_derived_mutant_fields_are_validated;
+          Alcotest.test_case "report redactions are opaque" `Quick
+            test_report_redactions_are_opaque;
           Alcotest.test_case "execution evidence is self-consistent" `Quick
             test_execution_evidence_is_self_consistent;
         ] );

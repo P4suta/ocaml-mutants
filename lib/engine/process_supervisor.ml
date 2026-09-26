@@ -69,6 +69,26 @@ external windows_spawn_process_group :
 let process_id = windows_process_id
 let helper_flag = "--ocaml-mutants-internal-process-helper"
 let helper_environment = "OCAML_MUTANTS_HELPER_EXECUTABLE"
+let helper_active_environment = "OCAML_MUTANTS_PROCESS_HELPER"
+
+module For_testing = struct
+  let helper_active_environment = helper_active_environment
+end
+
+let environment_without name =
+  let same_name candidate =
+    if Sys.win32 then
+      String.equal
+        (String.lowercase_ascii candidate)
+        (String.lowercase_ascii name)
+    else String.equal candidate name
+  in
+  Unix.environment () |> Array.to_list
+  |> List.filter (fun binding ->
+      match String.index_opt binding '=' with
+      | None -> true
+      | Some index -> not (same_name (String.sub binding 0 index)))
+  |> Array.of_list
 
 module Positive_seconds = struct
   type t = Seconds of float
@@ -199,17 +219,24 @@ let run_helper argv =
         if not (Sys.file_exists paths.go) then helper_failure_exit_code
         else (
           Sys.chdir request.cwd;
+          (* The helper is the same executable as the CLI. An instrumented CLI
+             must not contribute its own sites to the target's hit file or
+             activate a mutant while it is only establishing process-tree
+             ownership. The target receives the caller's environment with the
+             one-shot helper marker removed. *)
+          let target_environment =
+            environment_without helper_active_environment
+          in
           if Sys.win32 then
             let pid =
               Unix.create_process_env request.target.(0) request.target
-                (Unix.environment ()) Unix.stdin Unix.stdout Unix.stderr
+                target_environment Unix.stdin Unix.stdout Unix.stderr
             in
             match snd (Unix.waitpid [] pid) with
             | Unix.WEXITED code -> code
             | Unix.WSIGNALED signal | Unix.WSTOPPED signal ->
                 signal_exit_code_base + signal
-          else
-            Unix.execvpe request.target.(0) request.target (Unix.environment ()))
+          else Unix.execvpe request.target.(0) request.target target_environment)
       with exn ->
         prerr_endline ("ocaml-mutants process helper: " ^ Printexc.to_string exn);
         helper_failure_exit_code)
@@ -239,8 +266,6 @@ let updated_environment changes =
 let capture_capacity_bytes =
   Positive_bytes.to_int production_policy.retained_output_per_stream
 
-let capture_half_capacity_bytes = capture_capacity_bytes / 2
-
 let output_read_chunk_bytes =
   Positive_bytes.to_int production_policy.output_read_chunk
 
@@ -251,11 +276,24 @@ type split_capture = {
   mutable tail_length : int;
 }
 
-type capture_state = Full of Buffer.t | Split of split_capture
-type capture = { mutable state : capture_state; mutable total : int }
+type capture_state = Discarded | Full of Buffer.t | Split of split_capture
 
-let capture_create () =
-  { state = Full (Buffer.create output_read_chunk_bytes); total = 0 }
+type capture = {
+  capacity : int;
+  mutable state : capture_state;
+  mutable total : int;
+}
+
+let capture_create capacity =
+  if capacity < 0 then invalid_arg "capture capacity must be non-negative"
+  else
+    {
+      capacity;
+      state =
+        (if capacity = 0 then Discarded
+         else Full (Buffer.create (min capacity output_read_chunk_bytes)));
+      total = 0;
+    }
 
 let split_feed split bytes offset length =
   let capacity = Bytes.length split.tail in
@@ -279,25 +317,27 @@ let split_feed split bytes offset length =
 let capture_feed capture bytes offset length =
   capture.total <- capture.total + length;
   match capture.state with
+  | Discarded -> ()
   | Split split -> split_feed split bytes offset length
   | Full buffer ->
-      if Buffer.length buffer + length <= capture_capacity_bytes then
+      if Buffer.length buffer + length <= capture.capacity then
         Buffer.add_subbytes buffer bytes offset length
       else
         let combined =
           Buffer.contents buffer ^ Bytes.sub_string bytes offset length
         in
+        let head_capacity = capture.capacity / 2 in
+        let tail_capacity = capture.capacity - head_capacity in
         let split =
           {
-            head = String.sub combined 0 capture_half_capacity_bytes;
-            tail = Bytes.create capture_half_capacity_bytes;
+            head = String.sub combined 0 head_capacity;
+            tail = Bytes.create tail_capacity;
             tail_start = 0;
             tail_length = 0;
           }
         in
         let tail_offset =
-          max capture_half_capacity_bytes
-            (String.length combined - capture_half_capacity_bytes)
+          max head_capacity (String.length combined - tail_capacity)
         in
         let tail_bytes = Bytes.unsafe_of_string combined in
         split_feed split tail_bytes tail_offset
@@ -306,6 +346,7 @@ let capture_feed capture bytes offset length =
 
 let capture_contents capture =
   match capture.state with
+  | Discarded -> ("", capture.total > 0, capture.total)
   | Full buffer -> (Buffer.contents buffer, false, capture.total)
   | Split split ->
       let tail = Bytes.create split.tail_length in
@@ -317,8 +358,8 @@ let capture_contents capture =
         Bytes.blit split.tail 0 tail first (split.tail_length - first);
       (split.head ^ Bytes.unsafe_to_string tail, true, capture.total)
 
-let drain descriptor =
-  let capture = capture_create () in
+let drain ~capacity descriptor =
+  let capture = capture_create capacity in
   let chunk = Bytes.create output_read_chunk_bytes in
   Fun.protect
     ~finally:(fun () ->
@@ -408,7 +449,11 @@ let wait ~pid ~job ~job_assigned ~timeout ~cancelled =
   in
   poll ()
 
-let run ?timeout ?(cancelled = fun () -> false) ?cancel ~cwd ~env command =
+let run ?timeout ?(cancelled = fun () -> false) ?cancel
+    ?(stdout_limit = capture_capacity_bytes)
+    ?(stderr_limit = capture_capacity_bytes) ~cwd ~env command =
+  if stdout_limit < 0 || stderr_limit < 0 then
+    invalid_arg "process capture limits must be non-negative";
   let started = Mtime_clock.now () in
   let cancelled () =
     cancelled () || Option.fold ~none:false ~some:Cancel.is_requested cancel
@@ -441,7 +486,11 @@ let run ?timeout ?(cancelled = fun () -> false) ?cancel ~cwd ~env command =
         let stdout_read, stdout_fd = Unix.pipe ~cloexec:true () in
         let stderr_read, stderr_fd = Unix.pipe ~cloexec:true () in
         let environment =
-          updated_environment (env @ [ (helper_environment, None) ])
+          updated_environment
+            (env
+            @ [
+                (helper_environment, None); (helper_active_environment, Some "1");
+              ])
         in
         let job = if Sys.win32 then job_create () else Nativeint.zero in
         let stdout_capture = ref None in
@@ -460,12 +509,16 @@ let run ?timeout ?(cancelled = fun () -> false) ?cancel ~cwd ~env command =
           stdout_thread :=
             Some
               (Thread.create
-                 (fun () -> stdout_capture := Some (drain stdout_read))
+                 (fun () ->
+                   stdout_capture :=
+                     Some (drain ~capacity:stdout_limit stdout_read))
                  ());
           stderr_thread :=
             Some
               (Thread.create
-                 (fun () -> stderr_capture := Some (drain stderr_read))
+                 (fun () ->
+                   stderr_capture :=
+                     Some (drain ~capacity:stderr_limit stderr_read))
                  ())
         in
         let finish status =

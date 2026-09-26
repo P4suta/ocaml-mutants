@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/P4suta/ocaml-mutants/schema/catalog-v2.schema.json",
+  "title": "ocaml-mutants catalog-v2",
+  "type": "object",
+  "required": ["document_type", "schema_version", "workspace", "input_fingerprint", "profile", "selection", "mutants", "skips"],
+  "properties": {
+    "document_type": { "const": "ocaml-mutants.catalog-v2" },
+    "schema_version": { "const": 2 },
+    "workspace": {
+      "type": "object",
+      "required": ["digest", "toolchain"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/digest" },
+        "toolchain": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "input_fingerprint": {
+      "type": "object",
+      "required": ["digest", "workspace_digest"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/digest" },
+        "workspace_digest": { "$ref": "#/$defs/digest" }
+      },
+      "additionalProperties": false
+    },
+    "profile": { "enum": ["balanced", "strong", "all"] },
+    "selection": { "type": "string" },
+    "mutants": { "type": "array", "items": { "$ref": "#/$defs/mutant" } },
+    "skips": { "type": "array", "items": { "$ref": "#/$defs/skip" } }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "range": {
+      "type": "object",
+      "required": ["start_byte", "end_byte", "start_line", "start_column", "end_line", "end_column"],
+      "properties": {
+        "start_byte": { "type": "integer", "minimum": 0 },
+        "end_byte": { "type": "integer", "minimum": 1 },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "start_column": { "type": "integer", "minimum": 0 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "end_column": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "mutant": {
+      "type": "object",
+      "required": ["id", "full_id", "lineage_id", "path", "range", "family", "rule"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+        "full_id": { "$ref": "#/$defs/digest" },
+        "lineage_id": { "$ref": "#/$defs/digest" },
+        "path": { "type": "string", "minLength": 1 },
+        "range": { "$ref": "#/$defs/range" },
+        "family": { "type": "string", "minLength": 1 },
+        "rule": { "type": "string", "pattern": "^[a-z0-9-]+@[1-9][0-9]*$" }
+      },
+      "additionalProperties": false
+    },
+    "skip": {
+      "type": "object",
+      "required": ["reason", "count", "examples"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "count": { "type": "integer", "minimum": 1 },
+        "examples": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

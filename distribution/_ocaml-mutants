@@ -1,0 +1,16 @@
+#compdef ocaml-mutants
+local -a commands
+commands=(
+  'run:measure mutations'
+  'check:apply policy to saved evidence'
+  'report:render saved evidence'
+  'plan:create deterministic shards'
+  'merge:merge all planned shards'
+  'list:list discovered mutants'
+  'ui:open the terminal UI'
+  'doctor:diagnose the workspace'
+  'config:manage configuration'
+  'cache:maintain the local store'
+  'mutant:resolve one mutant'
+)
+_describe 'command' commands
