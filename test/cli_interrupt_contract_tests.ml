@@ -870,7 +870,7 @@ let check_report layout =
   let not_run = Engine.Run_store.not_run decoded in
   if not_run = [] then fail "interrupted native report was not partial";
   let open Yojson.Safe.Util in
-  expect_string "report document type" "ocaml-mutants.run-report-v1"
+  expect_string "report document type" "ocaml-mutants.run-report-v2"
     (encoded |> member "document_type");
   expect_string "report status" "interrupted" (encoded |> member "status");
   expect_string "report summary kind" "partial"

@@ -1,0 +1,61 @@
+.TH OCAML-MUTANTS 1 "2026-08-29" "ocaml-mutants 1.0.0" "User Commands"
+.SH NAME
+ocaml-mutants \- type-aware mutation testing for Dune projects
+.SH SYNOPSIS
+.B ocaml-mutants
+.I COMMAND
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+Discovers typed OCaml mutations in an isolated workspace snapshot, supervises
+tests, and stores versioned evidence locally. With no arguments an interactive
+TTY opens the full-screen UI; a non-TTY invocation exits 2.
+.SH COMMANDS
+.TP
+.B run
+Measure mutations. Complete measurement exits 0 regardless of survivors.
+.TP
+.B check [RUN_ID]
+Apply configured policy: pass 0, violation 1, unusable evidence 2.
+.TP
+.B report [RUN_ID]
+Render terminal, JSON, HTML, Markdown, SARIF, or Stryker output.
+.TP
+.B plan, merge
+Create and combine deterministic CI shards.
+.TP
+.B list, ui, doctor
+Discover mutants, browse evidence, or diagnose the environment.
+.TP
+.B config init|show|check|migrate
+Manage `.ocaml-mutants.toml` version 2.
+.TP
+.B cache stats|gc|clean
+Inspect and maintain the capability-protected local store.
+.TP
+.B mutant show|rerun|apply|revert|expect
+Resolve actionable mutants with guarded source/config edits.
+.SH TERMINAL UI
+The live UI shows each settled mutant's diff, executed tests, bounded output,
+evidence, coverage, and expectation state before the final report is published.
+Use
+.B ui --color=auto|always|never
+or
+.B ui --no-color
+to control styling. The
+.B NO_COLOR
+environment variable selects the full-screen monochrome mode unless
+.B --color=always
+is explicit.
+.SH EXIT STATUS
+Run uses 0 for complete measurement, 2 for usage/infrastructure/incomplete
+evidence, and 130 for interruption. Check additionally uses 1 for policy
+violations on valid evidence.
+.SH FILES
+.TP
+.I .ocaml-mutants.toml
+Optional version 2 workspace configuration.
+.TP
+.I .ocaml-mutants/undo
+Owner-private undo records created by explicit mutant apply.
+.SH SEE ALSO
+Project documentation at https://github.com/P4suta/ocaml-mutants

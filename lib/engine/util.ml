@@ -1,7 +1,33 @@
 let ( let* ) value continuation = Result.bind value continuation
 let protect f = try Ok (f ()) with Sys_error message -> Error message
 
+let windows_extended_path path =
+  if not Sys.win32 then path
+  else
+    let path =
+      if String.starts_with ~prefix:"\\\\?\\UNC\\" path then
+        "\\\\" ^ String.sub path 8 (String.length path - 8)
+      else if String.starts_with ~prefix:"\\\\?\\" path then
+        String.sub path 4 (String.length path - 4)
+      else path
+    in
+    let absolute =
+      if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
+      else path
+    in
+    let absolute =
+      String.map (function '\\' -> '/' | character -> character) absolute
+      |> Fpath.of_string |> Result.map Fpath.normalize
+      |> Result.map Fpath.to_string
+      |> Result.value ~default:absolute
+      |> String.map (function '/' -> '\\' | character -> character)
+    in
+    if String.starts_with ~prefix:"\\\\" absolute then
+      "\\\\?\\UNC\\" ^ String.sub absolute 2 (String.length absolute - 2)
+    else "\\\\?\\" ^ absolute
+
 let read_file path =
+  let path = windows_extended_path path in
   protect (fun () ->
       let channel = open_in_bin path in
       Fun.protect
@@ -9,6 +35,7 @@ let read_file path =
         (fun () -> really_input_string channel (in_channel_length channel)))
 
 let write_file path contents =
+  let path = windows_extended_path path in
   protect (fun () ->
       let channel = open_out_bin path in
       Fun.protect
@@ -17,22 +44,29 @@ let write_file path contents =
 
 let rec mkdir_p path =
   if path = "" || path = "." then Ok ()
-  else if Sys.file_exists path then
-    if Sys.is_directory path then Ok ()
-    else Error (Printf.sprintf "%s exists and is not a directory" path)
   else
-    let parent = Filename.dirname path in
-    let* () = if String.equal parent path then Ok () else mkdir_p parent in
-    try
-      Unix.mkdir path 0o755;
-      Ok ()
-    with
-    | Unix.Unix_error (Unix.EEXIST, _, _) when Sys.is_directory path -> Ok ()
-    | Unix.Unix_error (error, function_name, argument) ->
-        Error
-          (Printf.sprintf "%s(%s): %s" function_name argument
-             (Unix.error_message error))
-    | Sys_error message -> Error message
+    let native_path = windows_extended_path path in
+    if Sys.file_exists native_path then
+      if Sys.is_directory native_path then Ok ()
+      else Error (Printf.sprintf "%s exists and is not a directory" path)
+    else
+      let parent = Filename.dirname path in
+      let* () = if String.equal parent path then Ok () else mkdir_p parent in
+      try
+        Unix.mkdir native_path 0o755;
+        Ok ()
+      with
+      | Unix.Unix_error (Unix.EEXIST, _, _) -> (
+          match Sys.is_directory native_path with
+          | true -> Ok ()
+          | false ->
+              Error (Printf.sprintf "%s exists and is not a directory" path)
+          | exception Sys_error message -> Error message)
+      | Unix.Unix_error (error, function_name, argument) ->
+          Error
+            (Printf.sprintf "%s(%s): %s" function_name argument
+               (Unix.error_message error))
+      | Sys_error message -> Error message
 
 external atomic_replace : string -> string -> bool
   = "ocaml_mutants_atomic_replace"
@@ -52,40 +86,74 @@ let atomic_write path contents =
       in
       match write_file temporary contents with
       | Error _ as error -> error
-      | Ok () ->
-          if atomic_replace temporary path then Ok ()
-          else (
-            (try Sys.remove temporary with Sys_error _ -> ());
-            Error (Printf.sprintf "atomic replace failed for %s" path)))
+      | Ok () -> (
+          let native_path = windows_extended_path path in
+          let native_temporary = windows_extended_path temporary in
+          let mode =
+            try (Unix.stat native_path).st_perm
+            with Unix.Unix_error _ | Sys_error _ -> 0o600
+          in
+          match Unix.chmod native_temporary mode with
+          | () ->
+              if atomic_replace native_temporary native_path then Ok ()
+              else (
+                (try Sys.remove native_temporary with Sys_error _ -> ());
+                Error (Printf.sprintf "atomic replace failed for %s" path))
+          | exception Unix.Unix_error (error, function_name, argument) ->
+              (try Sys.remove native_temporary with Sys_error _ -> ());
+              Error
+                (Printf.sprintf "%s(%s): %s" function_name argument
+                   (Unix.error_message error))))
 
-let rec remove_tree path =
-  try
-    let stats = Unix.lstat path in
-    if stats.st_kind = Unix.S_DIR then
-      let entries = Sys.readdir path |> Array.to_list in
-      let rec remove_entries = function
-        | [] ->
-            Unix.rmdir path;
-            Ok ()
-        | name :: rest -> (
-            match remove_tree (Filename.concat path name) with
-            | Ok () -> remove_entries rest
-            | Error _ as error -> error)
-      in
-      remove_entries entries
-    else (
-      (try Unix.chmod path 0o600 with Unix.Unix_error _ -> ());
-      Sys.remove path;
-      Ok ())
-  with
-  | Unix.Unix_error ((Unix.ENOENT | Unix.ENOTDIR), _, _) -> Ok ()
-  | Sys_error message -> Error message
-  | Unix.Unix_error (error, function_name, argument) ->
-      Error
-        (Printf.sprintf "%s(%s): %s" function_name argument
-           (Unix.error_message error))
+let remove_tree path =
+  (* OCaml's Windows ambient path functions otherwise stop addressing a leaf
+     once a nested cache key and full mutant ID push it past MAX_PATH. The
+     caller still supplies and validates the deletion root; this only selects
+     the extended-length spelling of that exact absolute path. *)
+  let root = windows_extended_path path in
+  let rec remove path =
+    try
+      let stats = Unix.lstat path in
+      if stats.st_kind = Unix.S_DIR then
+        let rec remove_directory attempts =
+          let entries = Sys.readdir path |> Array.to_list in
+          let rec remove_entries = function
+            | [] -> (
+                try
+                  Unix.rmdir path;
+                  Ok ()
+                with
+                | Unix.Unix_error ((Unix.ENOTEMPTY | Unix.EEXIST), _, _)
+                when attempts < 40
+                ->
+                  (* Re-enumerate only this same validated directory while a
+                     settling worker or scanner releases its last handle. *)
+                  Unix.sleepf 0.05;
+                  remove_directory (attempts + 1))
+            | name :: rest -> (
+                match remove (Filename.concat path name) with
+                | Ok () -> remove_entries rest
+                | Error _ as error -> error)
+          in
+          remove_entries entries
+        in
+        remove_directory 0
+      else (
+        (try Unix.chmod path 0o600 with Unix.Unix_error _ -> ());
+        Sys.remove path;
+        Ok ())
+    with
+    | Unix.Unix_error ((Unix.ENOENT | Unix.ENOTDIR), _, _) -> Ok ()
+    | Sys_error message -> Error message
+    | Unix.Unix_error (error, function_name, argument) ->
+        Error
+          (Printf.sprintf "%s(%s): %s" function_name argument
+             (Unix.error_message error))
+  in
+  remove root
 
 let files_recursive ?(skip = fun _ -> false) root =
+  let root = windows_extended_path root in
   let rec visit relative accumulator =
     let absolute =
       if relative = "" then root else Filename.concat root relative
@@ -123,6 +191,7 @@ let digest_file path = Result.map sha256 (read_file path)
 
 let digest_tree ?(skip = fun _ -> false) root =
   let files = files_recursive ~skip root in
+  let root = windows_extended_path root in
   let buffer = Buffer.create 4096 in
   let rec add = function
     | [] -> Ok (sha256 (Buffer.contents buffer))

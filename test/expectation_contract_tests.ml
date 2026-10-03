@@ -161,7 +161,8 @@ let check_fulfilled_report label mutant_id process =
   let report = parse_json label process in
   let summary = report |> member "summary" in
   if summary |> member "expected_survivors" |> to_int <> 1 then
-    fail "%s did not count the fulfilled expected survivor" label;
+    fail "%s did not count the fulfilled expected survivor:\n%s" label
+      process.stdout;
   if summary |> member "unexpected_survivors" |> to_int <> 0 then
     fail "%s counted an unexpected survivor" label;
   if summary |> member "unfulfilled_expectations" |> to_int <> 0 then
@@ -200,7 +201,10 @@ let check_fulfilled_report label mutant_id process =
   | _ -> fail "%s top-level expectation ledger was not fulfilled" label
 
 let check_unfulfilled_report label mutant_id process =
-  expect_exit label 2 process;
+  (* [run] records measurement evidence only. Policy is enforced separately by
+     [check], so a complete run stays successful even when an expectation is
+     unfulfilled. *)
+  expect_exit label 0 process;
   let open Yojson.Safe.Util in
   let report = parse_json label process in
   let summary = report |> member "summary" in

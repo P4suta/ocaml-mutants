@@ -120,15 +120,76 @@ def valid_report() -> dict[str, object]:
         "original": "true",
         "replacement": "false",
         "source_digest": "b" * 64,
+        "lineage_id": "d" * 64,
+    }
+    stage = {"name": "fast", "status": "exited 1", "duration_seconds": 0.1}
+    attempt = {
+        "outcome": "killed",
+        "error": None,
+        "duration_seconds": 0.1,
+        "stages": [stage],
+        "stdout": captured(),
+        "stderr": captured(),
     }
     return {
-        "document_type": "ocaml-mutants.run-report-v1",
-        "schema_version": 1,
+        "document_type": "ocaml-mutants.run-report-v2",
+        "schema_version": 2,
         "run_id": "contract-run",
         "status": "completed",
         "started_at": "2026-01-01T00:00:00Z",
         "finished_at": "2026-01-01T00:00:01Z",
         "workspace": {"digest": "c" * 64, "toolchain": "contract"},
+        "resolved_config": {
+            "version": 2,
+            "mutation": {
+                "profile": "balanced",
+                "include": ["**/*.ml"],
+                "exclude": ["_build/**"],
+                "operators": [],
+                "expectations": [],
+            },
+            "test": {
+                "driver": "command",
+                "command": ["dune", "build"],
+                "stages": [
+                    {
+                        "name": "fast",
+                        "command": ["dune", "build"],
+                    }
+                ],
+                "timeout_seconds": 10.0,
+                "baseline_runs": 1,
+                "parallel_safe": False,
+                "external_inputs": [],
+                "reproducible": True,
+            },
+            "execution": {"mode": "strict", "jobs": 1},
+            "cache": {
+                "mode": "on",
+                "directory": None,
+                "historical_reuse": "off",
+            },
+            "policy": {
+                "require_complete": True,
+                "max_unexpected_survivors": 0,
+                "minimum_score": None,
+                "maximum_score_drop": None,
+                "allow_estimated": False,
+            },
+            "report": {"formats": ["terminal", "json"], "directory": None},
+            "privacy": {
+                "stdout_limit_bytes": 1048576,
+                "stderr_limit_bytes": 1048576,
+                "redactions": [],
+                "source_embedding": "context",
+            },
+        },
+        "input_fingerprint": {
+            "digest": "e" * 64,
+            "workspace_digest": "c" * 64,
+            "toolchain": "contract",
+            "config_digest": "f" * 64,
+        },
         "profile": "balanced",
         "selection": {"description": "all"},
         "test": {
@@ -143,6 +204,7 @@ def valid_report() -> dict[str, object]:
                     "slowest_baseline_seconds": 0.1,
                 }
             ],
+            "inventory": {"state": "stage-level", "tests": ["fast"], "hit_map": []},
         },
         "cache": {"mode": "on", "key": "unavailable"},
         "summary": {
@@ -162,6 +224,15 @@ def valid_report() -> dict[str, object]:
             "detected": 1,
             "score": 100.0,
         },
+        "evidence": {
+            "level": "executed",
+            "complete": True,
+            "executed": 1,
+            "exact_cache": 0,
+            "estimated": 0,
+            "checkpointed": 1,
+            "resumed": 0,
+        },
         "mutants": [
             {
                 "mutant": mutant,
@@ -169,9 +240,16 @@ def valid_report() -> dict[str, object]:
                 "error": None,
                 "duration_seconds": 0.1,
                 "cached": False,
-                "stages": [
-                    {"name": "fast", "status": "exited 1", "duration_seconds": 0.1}
-                ],
+                "evidence": {
+                    "level": "executed",
+                    "origin": "execution",
+                    "estimated": False,
+                },
+                "attempts": [attempt],
+                "killing_test": "fast",
+                "coverage": "covered",
+                "checkpoint": {"settled": True, "resumed": False},
+                "stages": [stage],
                 "timeout_confirmed": False,
                 "timeout_retry": None,
                 "expected_survivor": False,
@@ -213,6 +291,7 @@ def report_contract(report_tool: str, schema: str) -> None:
 
         survivor = copy.deepcopy(report)
         survivor["mutants"][0]["outcome"] = "survived"
+        survivor["mutants"][0]["coverage"] = "unknown"
         summary = survivor["summary"]
         summary["killed"] = 0
         summary["survived"] = 1

@@ -439,7 +439,9 @@ let test_mutant_id_prefix_validation () =
     [ ""; "A"; "g"; "12-34"; String.make 65 'f' ]
 
 let instrument source mutants =
-  Core.Instrumentation.instrument ~source:(Core.Source.of_string source) mutants
+  Core.Instrumentation.instrument ~hit_owner:(String.make 64 'a')
+    ~source:(Core.Source.of_string source)
+    mutants
 
 let test_instrumentation_guard_shape () =
   let source = "true" in
@@ -447,18 +449,32 @@ let test_instrumentation_guard_shape () =
   match instrument source [ candidate ] with
   | Error error -> Alcotest.failf "%a" Core.Instrumentation.pp_error error
   | Ok rendered ->
-      let expected =
-        Printf.sprintf
-          "module Ocaml_mutants_runtime_0 = struct\n\
-          \  let active = Stdlib.Sys.getenv_opt \"OCAML_MUTANTS_ACTIVE\"\n\
-           end\n\
-           (match Ocaml_mutants_runtime_0.active with | None -> (true) | Some \
-           %S -> (false) | Some _ -> (true))"
-          (id candidate)
+      let contains needle =
+        let needle_length = String.length needle in
+        let rec search index =
+          index + needle_length <= String.length rendered
+          && (String.sub rendered index needle_length = needle
+             || search (index + 1))
+        in
+        search 0
       in
-      Alcotest.(check string)
-        "original constrains replacements and unknown IDs fall back" expected
-        rendered
+      let full_id = Core.Mutant.Id.full (Core.Mutant.id candidate) in
+      List.iter
+        (fun (label, needle) ->
+          Alcotest.(check bool) label true (contains needle))
+        [
+          ("full ID controls activation", Printf.sprintf "Some %S" full_id);
+          ("full ID is recorded as a hit", Printf.sprintf "hit %S" full_id);
+          ("hit file is optional", "OCAML_MUTANTS_HIT_FILE");
+          ("hit file ownership is explicit", "OCAML_MUTANTS_HIT_OWNER");
+          ("hit owner is embedded", String.make 64 'a');
+          ("process helpers are isolated", "OCAML_MUTANTS_PROCESS_HELPER");
+          ("helper marker disables runtime", "if process_helper then None");
+          ("unknown IDs preserve the original", "Some _ -> (true)");
+          ("domain-safe hit collection", "Stdlib.Atomic.compare_and_set");
+          ("process-safe hit sidecars", "Stdlib.Filename.open_temp_file");
+          ("hit data flushes at process exit", "Stdlib.at_exit flush");
+        ]
 
 let instrumentation_compiler () =
   let switch_prefix =
@@ -475,6 +491,84 @@ let compile_instrumentation_fixture ~directory ~name source =
   | Error message -> Alcotest.fail message);
   Engine.Process_supervisor.run ~timeout:30. ~cwd:directory ~env:[]
     [ instrumentation_compiler (); "-c"; Filename.basename path ]
+
+let test_instrumentation_hit_owner () =
+  let prefix = "let observed = " in
+  let source = prefix ^ "true\nlet () = ignore observed\n" in
+  let candidate =
+    mutant ~source ~start_byte:(String.length prefix)
+      ~end_byte:(String.length prefix + 4)
+      "false"
+  in
+  let owner = String.make 64 'a' in
+  let rendered =
+    match
+      Core.Instrumentation.instrument ~hit_owner:owner
+        ~source:(Core.Source.of_string source)
+        [ candidate ]
+    with
+    | Ok value -> value
+    | Error error -> Alcotest.failf "%a" Core.Instrumentation.pp_error error
+  in
+  let directory = Filename.temp_dir "ocaml-mutants-hit-owner-" ".tmp" in
+  Fun.protect
+    ~finally:(fun () -> ignore (Engine.Util.remove_tree directory))
+    (fun () ->
+      let source_path = Filename.concat directory "probe.ml" in
+      let executable = Filename.concat directory ("probe" ^ Config.ext_exe) in
+      (match Engine.Util.atomic_write source_path rendered with
+      | Ok () -> ()
+      | Error message -> Alcotest.fail message);
+      let compilation =
+        Engine.Process_supervisor.run ~timeout:30. ~cwd:directory ~env:[]
+          [
+            instrumentation_compiler ();
+            "-o";
+            Filename.basename executable;
+            Filename.basename source_path;
+          ]
+      in
+      (match compilation.status with
+      | Engine.Process_supervisor.Exited 0 -> ()
+      | status ->
+          Alcotest.failf "hit-owner fixture did not compile: %s\n%s"
+            (Engine.Process_supervisor.status_string status)
+            compilation.stderr);
+      let run_index = ref 0 in
+      let run label supplied_owner expected =
+        let hit_directory =
+          Filename.concat directory (Printf.sprintf "hits-%d" !run_index)
+        in
+        incr run_index;
+        Unix.mkdir hit_directory 0o700;
+        let result =
+          Engine.Process_supervisor.run ~timeout:30. ~cwd:directory
+            ~env:
+              [
+                ("OCAML_MUTANTS_ACTIVE", None);
+                ("OCAML_MUTANTS_HIT_FILE", Some hit_directory);
+                (Core.Instrumentation.hit_owner_environment, Some supplied_owner);
+              ]
+            [ executable ]
+        in
+        (match result.status with
+        | Engine.Process_supervisor.Exited 0 -> ()
+        | status ->
+            Alcotest.failf "%s fixture failed: %s\n%s" label
+              (Engine.Process_supervisor.status_string status)
+              result.stderr);
+        let contents =
+          Engine.Util.files_recursive hit_directory
+          |> List.map (fun relative ->
+              get_ok
+                (Engine.Util.read_file (Filename.concat hit_directory relative)))
+          |> String.concat "" |> String.trim
+        in
+        Alcotest.(check string) label expected contents
+      in
+      run "matching catalog owns hit file" owner
+        (Core.Mutant.Id.full (Core.Mutant.id candidate));
+      run "foreign catalog cannot write hit file" (String.make 64 'b') "")
 
 let test_instrumentation_original_first_type_inference () =
   let prefix =
@@ -880,6 +974,7 @@ let test_report_codec () =
       outcome;
       duration;
       cached = false;
+      evidence_origin = Engine.Run_store.Execution;
       stages = [];
       timeout_confirmed = false;
       timeout_retry = None;
@@ -910,9 +1005,18 @@ let test_report_codec () =
                 slowest = duration;
               };
             ];
+          hit_map = [];
           timeout = Some duration;
           cache_mode = "auto";
+          execution_mode = "strict";
+          historical_reuse = "off";
           cache_key = String.make 64 'b';
+          resolved_config = Engine.Config.to_yojson Engine.Config.defaults;
+          input_fingerprint = String.make 64 'b';
+          config_digest =
+            Engine.Util.sha256
+              (Yojson.Safe.to_string ~std:true
+                 (Engine.Config.to_yojson Engine.Config.defaults));
         };
       status = Completed;
       results =
@@ -922,6 +1026,7 @@ let test_report_codec () =
             outcome = Core.Outcome.Timeout;
             duration = total_duration;
             cached = false;
+            evidence_origin = Engine.Run_store.Execution;
             stages = [];
             timeout_confirmed = true;
             timeout_retry =
@@ -943,6 +1048,7 @@ let test_report_codec () =
           ordinary_result error_mutant (Core.Outcome.Error "spawn failed")
             "error";
         ];
+      checkpointed = 5;
       completeness = Engine.Run_store.Complete;
       expectations =
         [
@@ -997,7 +1103,7 @@ let test_report_codec () =
   in
   let json = Engine.Run_store.run_to_yojson run in
   Alcotest.(check string)
-    "document type" "ocaml-mutants.run-report-v1"
+    "document type" "ocaml-mutants.run-report-v2"
     Yojson.Safe.Util.(json |> member "document_type" |> to_string);
   Alcotest.(check string)
     "profile is independent metadata" "all"
@@ -1125,6 +1231,7 @@ let test_report_codec () =
         };
       status = Engine.Run_store.Failed primary;
       results = [];
+      checkpointed = 0;
       expectations = [];
     }
   in
@@ -1210,6 +1317,7 @@ let test_stryker_report_projection () =
       outcome;
       duration;
       cached = false;
+      evidence_origin = Engine.Run_store.Execution;
       stages = [];
       timeout_confirmed;
       timeout_retry;
@@ -1264,12 +1372,22 @@ let test_stryker_report_projection () =
           test_command = command;
           baseline_duration = None;
           baseline_stages = [];
+          hit_map = [];
           timeout = Some duration;
           cache_mode = "off";
+          execution_mode = "strict";
+          historical_reuse = "off";
           cache_key = String.make 64 'b';
+          resolved_config = Engine.Config.to_yojson Engine.Config.defaults;
+          input_fingerprint = String.make 64 'b';
+          config_digest =
+            Engine.Util.sha256
+              (Yojson.Safe.to_string ~std:true
+                 (Engine.Config.to_yojson Engine.Config.defaults));
         };
       status = Engine.Run_store.Completed;
       results;
+      checkpointed = 6;
       completeness = Engine.Run_store.Partial [ not_run ];
       expectations =
         [
@@ -1377,6 +1495,7 @@ let test_stryker_report_projection () =
       run with
       results =
         [ result killed Core.Outcome.Killed; result killed Core.Outcome.Killed ];
+      checkpointed = 2;
       completeness = Engine.Run_store.Complete;
       expectations = [];
     }
@@ -1438,6 +1557,7 @@ let test_stryker_report_projection () =
     {
       run with
       results = [ result unicode_mutant Core.Outcome.Killed ];
+      checkpointed = 1;
       completeness = Engine.Run_store.Complete;
       expectations = [];
     }
@@ -1897,6 +2017,34 @@ let test_application_cancellation_and_signal_restoration () =
     !application_events;
 
   reset ();
+  let controlled_cancel = Engine.Cancel.create () in
+  Engine.Cancel.request controlled_cancel;
+  let controlled_error =
+    error_result "caller-owned cancellation"
+      (Fake_application.run_with_cancel ~cancel:controlled_cancel ~root:"."
+         ~config:Engine.Config.defaults ~fresh:true ~selection:Engine.Runner.All
+         ~output:(Engine.Runner.Terminal { quiet = true; color = false }))
+  in
+  Alcotest.(check int)
+    "caller-owned cancellation exits 130" 130
+    (Engine.Error.exit_code controlled_error);
+  Alcotest.(check (list int))
+    "caller-owned cancellation installs no signal subscriptions" []
+    !Fake_signals.install_attempts;
+  Alcotest.(check (list int))
+    "caller-owned cancellation restores no signal subscriptions" []
+    !Fake_signals.restore_attempts;
+  Alcotest.(check bool)
+    "caller-owned token reaches preparation" true
+    (match !Fake_application_services.observed_cancel_token with
+    | Some observed -> observed == controlled_cancel
+    | None -> false);
+  (match !Fake_application_services.observed_report_status with
+  | Some Engine.Application.Report_interrupted -> ()
+  | _ -> Alcotest.fail "caller-owned cancellation was not committed");
+  check_single_commit "caller-owned cancellation";
+
+  reset ();
   Fake_application_services.trigger_signal := None;
   Fake_application_services.trigger_signal_during_commit := Some Sys.sigint;
   (match invoke () with
@@ -2306,6 +2454,25 @@ let test_application_cancellation_and_signal_restoration () =
 
 let test_process_capture_and_timeout () =
   let executable = Unix.realpath Sys.executable_name in
+  let helper_environment =
+    Engine.Process_supervisor.run ~timeout:30. ~cwd:(Sys.getcwd ())
+      ~env:
+        [
+          ("OCAML_MUTANTS_TEST_CHILD", Some "helper-environment");
+          ("OCAML_MUTANTS_HIT_FILE", Some "target-hit-file");
+        ]
+      [ executable ]
+  in
+  (match helper_environment.status with
+  | Engine.Process_supervisor.Exited 0 -> ()
+  | status ->
+      Alcotest.failf "helper environment child returned %s\n%s"
+        (Engine.Process_supervisor.status_string status)
+        helper_environment.stderr);
+  Alcotest.(check string)
+    "helper marker is private and target hit file survives"
+    "absent|target-hit-file"
+    (String.trim helper_environment.stdout);
   let capture_capacity = Engine.Process_supervisor.capture_capacity_bytes in
   let payload_bytes = capture_capacity + 1024 in
   let captured =
@@ -2333,6 +2500,28 @@ let test_process_capture_and_timeout () =
   Alcotest.(check char)
     "stderr keeps tail" 'R'
     captured.stderr.[String.length captured.stderr - 1];
+  let limited =
+    Engine.Process_supervisor.run ~timeout:30. ~stdout_limit:17 ~stderr_limit:18
+      ~cwd:(Sys.getcwd ())
+      ~env:[ ("OCAML_MUTANTS_TEST_CHILD", Some "large-output") ]
+      [ executable ]
+  in
+  Alcotest.(check int) "custom stdout limit" 17 (String.length limited.stdout);
+  Alcotest.(check int) "custom stderr limit" 18 (String.length limited.stderr);
+  Alcotest.(check char) "custom stdout keeps head" 'H' limited.stdout.[0];
+  Alcotest.(check char)
+    "custom stdout keeps tail" 'T'
+    limited.stdout.[String.length limited.stdout - 1];
+  let discarded =
+    Engine.Process_supervisor.run ~timeout:30. ~stdout_limit:0 ~stderr_limit:0
+      ~cwd:(Sys.getcwd ())
+      ~env:[ ("OCAML_MUTANTS_TEST_CHILD", Some "large-output") ]
+      [ executable ]
+  in
+  Alcotest.(check string) "zero stdout limit" "" discarded.stdout;
+  Alcotest.(check string) "zero stderr limit" "" discarded.stderr;
+  Alcotest.(check bool)
+    "zero stdout is truncated" true discarded.stdout_truncated;
   let timed_out =
     Engine.Process_supervisor.run ~timeout:0.05 ~cwd:(Sys.getcwd ())
       ~env:[ ("OCAML_MUTANTS_TEST_CHILD", Some "sleep") ]
@@ -2410,6 +2599,7 @@ let test_cache_never_returns_unproven_outcomes () =
           outcome = Core.Outcome.Killed;
           duration;
           cached = false;
+          evidence_origin = Engine.Run_store.Execution;
           stages = [];
           timeout_confirmed = false;
           timeout_retry = None;
@@ -2512,6 +2702,7 @@ let test_cache_ownership_and_concurrency () =
           outcome = Core.Outcome.Killed;
           duration = get_ok (Core.Duration.of_seconds 0.1);
           cached = false;
+          evidence_origin = Engine.Run_store.Execution;
           stages = [];
           timeout_confirmed = false;
           timeout_retry = None;
@@ -2777,6 +2968,8 @@ let run_suite () =
             test_mutant_id_prefix_validation;
           Alcotest.test_case "instrumentation guard shape" `Quick
             test_instrumentation_guard_shape;
+          Alcotest.test_case "instrumentation hit owner" `Quick
+            test_instrumentation_hit_owner;
           Alcotest.test_case "instrumentation original-first typing" `Quick
             test_instrumentation_original_first_type_inference;
           Alcotest.test_case "nested ranges" `Quick test_nested_instrumentation;
@@ -2856,6 +3049,21 @@ let () =
         output_char stderr 'R';
         flush stderr
     | Some "sleep" -> Unix.sleepf 60.
+    | Some "helper-environment" ->
+        let marker =
+          match
+            Sys.getenv_opt
+              Engine.Process_supervisor.For_testing.helper_active_environment
+          with
+          | None -> "absent"
+          | Some value -> "present:" ^ value
+        in
+        let hit_file =
+          Option.value
+            (Sys.getenv_opt "OCAML_MUTANTS_HIT_FILE")
+            ~default:"absent"
+        in
+        Printf.printf "%s|%s\n%!" marker hit_file
     | Some "grandchild" ->
         let marker = Sys.getenv "OCAML_MUTANTS_TEST_GRANDCHILD_PID" in
         Unix.putenv "OCAML_MUTANTS_TEST_CHILD" "sleep";

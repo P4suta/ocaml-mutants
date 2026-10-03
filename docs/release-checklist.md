@@ -31,8 +31,17 @@
   subscription remains active until publication completes, then deactivates
   without an OS-handler restoration step
 - [ ] Confirm TTY, redirected, `CI=true`, and `NO_COLOR` output
-- [ ] Validate real CLI output against `schema/run-report-v1.schema.json`,
-  `schema/catalog-v1.schema.json`, and
+- [x] Connect the no-argument TUI to the live event stream, start runs with a
+  caller-owned cancel token, show phase/progress/warnings/settled state, and
+  reload the immutable final report without changing explicit `run` output
+- [x] Carry sufficient settled-result payloads to show result, diff, test,
+  output, evidence, and expectation detail before final report publication
+- [ ] Run keyboard, resize, Unicode, Ctrl-C, exception, and terminal-restoration
+  contracts through real POSIX PTYs and Windows ConPTY at narrow and wide
+  sizes; any backend failure is a release hold
+- [ ] Validate real CLI output against `schema/run-report-v2.schema.json`,
+  `schema/catalog-v2.schema.json`, `schema/check-report-v1.schema.json`,
+  `schema/event-v1.schema.json`, `schema/shard-plan-v1.schema.json`, and
   `schema/mutation-testing-report-v2.schema.json`
 - [ ] Verify the vendored upstream schema at
   `test/vendor/stryker-mutator/mutation-testing-report-schema-v2.json` remains
@@ -52,6 +61,12 @@
   rules: exactly one definition per registered rule, the pinned
   family-to-profile tier map, and the serialized-CMT discovery suite
 - [ ] Run against a dirty workspace and compare every file digest and Git status
+- [x] Make `test.driver = auto|dune|command` control execution, synthesize the
+  Dune 3.22 per-test alias inventory for `auto`/`dune`, preserve custom actions
+  as aliases, and prove covering/killer-first ordering without survivor skips
+- [x] Populate worker build directories from a private compiler-artifact cache,
+  hash compiled PPX/test artifacts into the fingerprint, and prove that user
+  test rules and mutable build state are never shared between workers
 - [ ] Verify cache reuse, corrupt-entry misses, concurrent writes, and
   source/config/toolchain/environment invalidation
 - [ ] Verify cache GC and clean cannot acquire an exclusive maintenance lease
@@ -67,8 +82,8 @@
   owner-private directory creation, captured deletion, atomic publication, and
   recursive deletion authority with mount-boundary proof; a remaining
   `Unsupported` is a release hold for that platform
-- [ ] Confirm the install contains the CLI, all three schemas, and the English
-  schema reference, but no installed OCaml library API
+- [ ] Confirm the install contains the CLI, all versioned public schemas,
+  completions, manpage, and documentation, but no installed OCaml library API
 - [ ] Run `mise run dogfood`; require a complete native report with no unexpected
   survivor, inconclusive/error/not-run result, or stale/unfulfilled/unevaluated
   expectation, and an unchanged source-workspace manifest
@@ -78,5 +93,7 @@
 - [ ] Review `CHANGELOG.md` and `RELEASE_NOTES.md`: cut the release section
   from `Unreleased` with the release date, add the link references at the
   bottom, and drop the pre-release framing from the release notes
-- [ ] Create and sign the `0.1.0` tag only after approval
+- [ ] Create and sign the `1.0.0` tag only after approval; confirm the release
+  workflow publishes three OS archives, per-platform SPDX SBOMs, SHA-256 sums,
+  Sigstore bundles, and GitHub provenance attestations
 - [ ] Submit to opam-repository only after approval

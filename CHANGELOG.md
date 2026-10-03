@@ -5,6 +5,43 @@ for its CLI, TOML schema, and JSON schema.
 
 ## [Unreleased]
 
+### Added
+
+- Stable `run`, `check`, `report`, `plan`, `merge`, `list`, `ui`, `doctor`,
+  `config`, `cache`, and `mutant` workflows.
+- Configuration v2 and five native versioned schemas, with v1 read migration.
+- Checksummed crash recovery, deterministic sharding, offline HTML, Markdown,
+  SARIF, JSONL events, and a Mosaic/Matrix terminal UI.
+- A live no-argument UI backed by the shared event stream, caller-owned
+  cancellation, immutable report refresh, best-effort corrupt-history
+  isolation, immediate settled-result evidence/diff browsing, a native Windows
+  Console/ConPTY backend, and full-screen `NO_COLOR`/`--color never` output.
+- Dune 3.22 per-test alias scheduling, exhaustive strict fallback, direct
+  PPX/test artifact fingerprints, and an `enabled-except-user-rules` private
+  compiler cache for isolated workers.
+
+### Fixed
+
+- Instrumented copies of the CLI no longer record or activate mutation sites
+  while acting as the process-supervisor helper. The one-shot helper marker is
+  removed before the real target starts, mutant attempts explicitly remove any
+  inherited readiness hit file, and every generated runtime accepts hit-file
+  writes only when a deterministic catalog ownership token matches. Together
+  these boundaries prevent even doubly nested mutation runs from mixing their
+  inner and outer catalog IDs. The instrumentation ABI advances from 3 to 5 so
+  pre-fix artifacts and outcomes cannot be reused.
+- Compiler-libs discovery explicitly registers OCaml's `unix` otherlib instead
+  of relying on the deprecated automatic include fallback. Deep doctor errors
+  now print their stable structured context as well as the cause and next step.
+
+### Changed
+
+- Complete measurement no longer fails for survivors; policy is enforced by
+  `check`.
+- Full SHA IDs now drive the instrumented runtime. Structural lineage IDs are
+  non-authoritative history hints only.
+- OCaml is constrained to 5.4–5.5 and Dune to 3.22–3.x.
+
 ## [0.1.0] - 2026-08-20
 
 ### Fixed

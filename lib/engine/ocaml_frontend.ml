@@ -693,8 +693,26 @@ let deduplicate_transformations mutants =
   in
   collect None [] [] sorted
 
-let discover ~root ~cmt_files ~selected_source ~operators =
+let initialize_compiler_path () =
+  (* compiler-libs does not inherit Dune's compile-time [-I] arguments at
+     runtime. Since OCaml 5.0 it can discover [stdlib/unix] lazily, but that is
+     a deprecated compatibility fallback and emits an alert on every analysis.
+     Register the directory explicitly, exactly as [-I +unix] would. The
+     engine's own [Config] module shadows compiler-libs' module of that name, so
+     derive the standard-library root from the initialized public path. *)
   Compmisc.init_path ();
+  Load_path.get_path_list ()
+  |> List.find_opt (fun directory ->
+      Sys.file_exists (Filename.concat directory "stdlib.cmi"))
+  |> Option.iter (fun standard_library ->
+      let unix = Filename.concat standard_library "unix" in
+      if
+        Sys.file_exists unix
+        && not (List.exists (String.equal unix) (Load_path.get_path_list ()))
+      then Load_path.add_dir ~hidden:false unix)
+
+let discover ~root ~cmt_files ~selected_source ~operators =
+  initialize_compiler_path ();
   let discovered =
     List.fold_left
       (fun accumulated cmt_file ->
@@ -735,7 +753,13 @@ let discover ~root ~cmt_files ~selected_source ~operators =
              duplicates)
       else Ok { catalog; skipped = summarize_skips skipped }
 
+let instrumentation_owner catalog =
+  Core.Catalog.to_list catalog
+  |> List.map (fun mutant -> Core.Mutant.Id.full (Core.Mutant.id mutant))
+  |> List.sort String.compare |> String.concat "\n" |> Util.sha256
+
 let instrument_files ~root catalog =
+  let hit_owner = instrumentation_owner catalog in
   let by_path = Hashtbl.create 32 in
   Core.Catalog.to_list catalog
   |> List.iter (fun mutant ->
@@ -759,7 +783,7 @@ let instrument_files ~root catalog =
         let mutants = Hashtbl.find by_path path in
         let* instrumented =
           match
-            Core.Instrumentation.instrument
+            Core.Instrumentation.instrument ~hit_owner
               ~source:(Core.Source.of_string source)
               mutants
           with

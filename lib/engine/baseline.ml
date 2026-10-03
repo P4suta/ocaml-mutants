@@ -40,14 +40,7 @@ let stages evidence =
 
 let slowest (evidence : evidence) = evidence.slowest
 let was_interrupted incomplete = incomplete.kind = Cancellation
-
-let default_command command =
-  Core.Nonempty_argv.to_list command = [ "dune"; "runtest"; "--force" ]
-
-let test_command command build_dir =
-  if default_command command then
-    [ "dune"; "runtest"; "--build-dir"; build_dir; "--force" ]
-  else Core.Nonempty_argv.to_list command
+let test_command = Test_command.resolve
 
 let slowest_duration = function
   | [] -> None
@@ -127,9 +120,10 @@ module Make (Process : PROCESS) = struct
         let result =
           Process.run ~cancel ~cwd:root
             ~env:
-              [
-                ("OCAML_MUTANTS_ACTIVE", None); ("DUNE_CACHE", Some "disabled");
-              ]
+              (("OCAML_MUTANTS_ACTIVE", None)
+              :: ("OCAML_MUTANTS_HIT_FILE", None)
+              :: (Core.Instrumentation.hit_owner_environment, None)
+              :: Test_command.dune_cache_environment ~root)
             (test_command stage.Config.command
                (Printf.sprintf "%s-stage-%d" build_dir stage_index))
         in
@@ -151,6 +145,12 @@ module Make (Process : PROCESS) = struct
                   (stop ~completed_stages ~stage ~runs ~kind:Command_failure
                      (invalid_duration stage result message))
             | Ok duration ->
+                Printf.eprintf
+                  "ocaml-mutants: baseline stage %S run %d/%d (%.1fs)\n%!"
+                  stage.Config.name
+                  (repetitions - remaining + 1)
+                  repetitions
+                  (Core.Duration.to_seconds duration);
                 run_repetitions ~completed_stages ~stage_index stage
                   (remaining - 1) (duration :: runs))
     in

@@ -1,4 +1,15 @@
-version = 1
+version = 2
 
 [cache]
 mode = "off"
+historical_reuse = "off"
+
+[execution]
+mode = "fast"
+jobs = "auto"
+
+[privacy]
+stdout_limit_bytes = 32
+stderr_limit_bytes = 32
+redactions = ["privacy-secret"]
+source_embedding = "context"

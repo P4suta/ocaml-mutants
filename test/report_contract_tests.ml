@@ -41,6 +41,7 @@ let result ~expected_reason mutant outcome : Engine.Run_store.mutant_result =
     outcome;
     duration = get_ok (Core.Duration.of_seconds 0.1);
     cached = false;
+    evidence_origin = Engine.Run_store.Execution;
     stages = [];
     timeout_confirmed = false;
     timeout_retry = None;
@@ -65,6 +66,9 @@ let test_expectation_policy_is_visible () =
          ~nonce:"terminal-policy")
   in
   let command = get_ok (Core.Nonempty_argv.of_list [ "dune"; "runtest" ]) in
+  let resolved_config, config_digest =
+    Fixtures.config_evidence Engine.Config.defaults
+  in
   let run : Engine.Run_store.run =
     {
       metadata =
@@ -79,9 +83,15 @@ let test_expectation_policy_is_visible () =
           test_command = command;
           baseline_duration = None;
           baseline_stages = [];
+          hit_map = [];
           timeout = None;
           cache_mode = "off";
+          execution_mode = "strict";
+          historical_reuse = "off";
           cache_key = "unavailable";
+          resolved_config;
+          input_fingerprint = "unavailable";
+          config_digest;
         };
       status = Engine.Run_store.Completed;
       results =
@@ -91,6 +101,7 @@ let test_expectation_policy_is_visible () =
           result ~expected_reason:(Some "must remain equivalent") unfulfilled
             Core.Outcome.Killed;
         ];
+      checkpointed = 2;
       completeness = Engine.Run_store.Complete;
       expectations =
         [

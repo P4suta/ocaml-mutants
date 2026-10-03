@@ -1,13 +1,19 @@
-version = 1
+# ocaml-mutants configuration v2
+version = 2
 
 [mutation]
 profile = "balanced"
 include = ["bin/**/*.ml", "lib/**/*.ml"]
 exclude = ["**/_build/**", "**/test/**", "**/tests/**"]
+operators = ["boolean-literal", "condition-negation", "boolean-connective", "comparison", "integer-arithmetic", "float-arithmetic", "if-branch", "sequence-deletion", "return-replacement", "match-arm", "constructor-replacement"]
 
 [test]
+driver = "command"
+timeout = "auto"
 baseline_runs = 3
 parallel_safe = false
+external_inputs = []
+reproducible = true
 
 [[test.stages]]
 name = "fast"
@@ -18,8 +24,24 @@ name = "full"
 command = ["dune", "runtest", "--force"]
 
 [execution]
+mode = "strict"
 jobs = 1
 
 [cache]
 # Automatic reuse stays proof-gated off until every external input is keyed.
 mode = "auto"
+historical_reuse = "off"
+
+[policy]
+require_complete = true
+max_unexpected_survivors = 0
+allow_estimated = false
+
+[report]
+formats = ["terminal", "json"]
+
+[privacy]
+stdout_limit_bytes = 65536
+stderr_limit_bytes = 65536
+redactions = []
+source_embedding = "context"

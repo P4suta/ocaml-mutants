@@ -193,6 +193,31 @@ let test_failure_is_fail_fast_and_ordered () =
     "later response unused" 1
     (List.length !Fake_process.responses)
 
+let test_baseline_clears_mutation_and_hit_environments () =
+  let config = config ~runs:1 [ stage "baseline" [ "baseline" ] ] in
+  let _, outcome = run config [ Fake_process.succeeded 0.1 ] in
+  (match outcome with
+  | Engine.Baseline.Completed _ -> ()
+  | Engine.Baseline.Incomplete _ -> Alcotest.fail "baseline unexpectedly failed");
+  let environment =
+    match !Fake_process.invocations with
+    | [ invocation ] -> invocation.Fake_process.env
+    | invocations ->
+        Alcotest.failf "expected one invocation, got %d"
+          (List.length invocations)
+  in
+  List.iter
+    (fun name ->
+      Alcotest.(check (option (option string)))
+        (name ^ " is explicitly unset")
+        (Some None)
+        (List.assoc_opt name environment))
+    [
+      "OCAML_MUTANTS_ACTIVE";
+      "OCAML_MUTANTS_HIT_FILE";
+      Core.Instrumentation.hit_owner_environment;
+    ]
+
 let test_cancellation_is_typed_and_retains_evidence () =
   let config =
     config ~runs:3 [ stage "fast" [ "fast" ]; stage "full" [ "full" ] ]
@@ -229,6 +254,8 @@ let () =
             test_later_repetition_failure_retains_partial_stage;
           Alcotest.test_case "commands are ordered and fail-fast" `Quick
             test_failure_is_fail_fast_and_ordered;
+          Alcotest.test_case "mutation environments are cleared" `Quick
+            test_baseline_clears_mutation_and_hit_environments;
           Alcotest.test_case "cancellation is typed" `Quick
             test_cancellation_is_typed_and_retains_evidence;
         ] );

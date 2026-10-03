@@ -93,5 +93,5 @@ if [ -s "$temp_dir/run.stderr" ]; then
 fi
 "$python_command" "$repo_root/scripts/verify-dogfood-run.py" \
   "$temp_dir/run-report.json" \
-  --schema "$repo_root/schema/run-report-v1.schema.json" \
+  --schema "$repo_root/schema/run-report-v2.schema.json" \
   --exit-code "$run_status"

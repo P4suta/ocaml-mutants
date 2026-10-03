@@ -44,7 +44,7 @@ cache representation.
 
 ## Two reports, two responsibilities
 
-The native `ocaml-mutants.run-report-v1` document is the authoritative ledger.
+The native `ocaml-mutants.run-report-v2` document is the authoritative ledger.
 It preserves the complete modeled engine state and records information that is
 not faithfully represented by the shared report schema. Command output is an
 intentional exception: stdout and stderr are bounded observations rather than

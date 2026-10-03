@@ -1,0 +1,13 @@
+(install
+ (section man)
+ (package ocaml-mutants)
+ (files ocaml-mutants.1))
+
+(install
+ (section share)
+ (package ocaml-mutants)
+ (files
+  (ocaml-mutants.bash as completions/ocaml-mutants.bash)
+  (_ocaml-mutants as completions/_ocaml-mutants)
+  (ocaml-mutants.fish as completions/ocaml-mutants.fish)
+  (ocaml-mutants.ps1 as completions/ocaml-mutants.ps1)))

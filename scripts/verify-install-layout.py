@@ -45,11 +45,36 @@ def expected_files(executable: PurePosixPath) -> set[PurePosixPath]:
         # documentation configuration. Metadata, not an OCaml library surface.
         PurePosixPath(f"doc/{PACKAGE}/odoc-config.sexp"),
         PurePosixPath(f"share/{PACKAGE}/catalog-v1.schema.json"),
+        PurePosixPath(f"share/{PACKAGE}/catalog-v2.schema.json"),
+        PurePosixPath(f"share/{PACKAGE}/check-report-v1.schema.json"),
+        PurePosixPath(f"share/{PACKAGE}/event-v1.schema.json"),
         PurePosixPath(f"share/{PACKAGE}/json-schema.md"),
         PurePosixPath(
             f"share/{PACKAGE}/mutation-testing-report-v2.schema.json"
         ),
         PurePosixPath(f"share/{PACKAGE}/run-report-v1.schema.json"),
+        PurePosixPath(f"share/{PACKAGE}/run-report-v2.schema.json"),
+        PurePosixPath(f"share/{PACKAGE}/shard-plan-v1.schema.json"),
+        PurePosixPath(f"share/{PACKAGE}/completions/ocaml-mutants.bash"),
+        PurePosixPath(f"share/{PACKAGE}/completions/_ocaml-mutants"),
+        PurePosixPath(f"share/{PACKAGE}/completions/ocaml-mutants.fish"),
+        PurePosixPath(f"share/{PACKAGE}/completions/ocaml-mutants.ps1"),
+        PurePosixPath("man/man1/ocaml-mutants.1"),
+        *{
+            PurePosixPath(f"share/{PACKAGE}/docs/{name}")
+            for name in (
+                "quickstart.md",
+                "configuration.md",
+                "tui.md",
+                "evidence.md",
+                "ci-sharding.md",
+                "github-actions-sharding.yml",
+                "migration-v1.md",
+                "expectations.md",
+                "privacy.md",
+                "troubleshooting.md",
+            )
+        },
     }
 
 
@@ -95,8 +120,8 @@ def main() -> None:
         raise SystemExit("install layout mismatch; " + "; ".join(details))
 
     print(
-        "install-layout: CLI, three schemas, English reference, and package "
-        "metadata only"
+        "install-layout: CLI, versioned schemas, docs, completions, manpage, "
+        "and package metadata only"
     )
 
 
