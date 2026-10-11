@@ -71,8 +71,12 @@ directory = "team-cache"
 - `test.baseline_runs`: positive integer, default 3. Every stage is measured
   this many times; the complete per-stage observations remain in the native
   report.
-- `test.parallel_safe`: permits concurrent custom test commands. The default
-  Dune command is always safe because each worker has its own build directory.
+- `test.parallel_safe`: permits concurrent commands that the engine cannot
+  isolate itself. `dune build`, `dune runtest`, and `dune test` commands without
+  an explicit `--build-dir` are always safe because the engine injects a private
+  build directory for each baseline stage and mutation worker. Commands with an
+  explicit build directory are preserved and require this opt-in to run in
+  parallel.
 - `execution.jobs`: positive worker count.
 - `cache.mode`: `"auto"`, `"on"`, or `"off"`. `auto` is proof-gated off until
   every cache input is represented. `on` is an explicit opt-in; its write
