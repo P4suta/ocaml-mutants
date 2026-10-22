@@ -17,11 +17,11 @@ actionlint = "1.7.12"
 version = "2.6.1"
 
 [tools.opam.platforms]
-windows-x64 = { asset_pattern = "opam-2.5.2-x86_64-windows.exe", bin = "opam.exe" }
-linux-x64 = { asset_pattern = "opam-2.5.2-x86_64-linux", bin = "opam" }
-linux-arm64 = { asset_pattern = "opam-2.5.2-arm64-linux", bin = "opam" }
-macos-x64 = { asset_pattern = "opam-2.5.2-x86_64-macos", bin = "opam" }
-macos-arm64 = { asset_pattern = "opam-2.5.2-arm64-macos", bin = "opam" }
+windows-x64 = { asset_pattern = "opam-{{ version }}-x86_64-windows.exe", bin = "opam.exe" }
+linux-x64 = { asset_pattern = "opam-{{ version }}-x86_64-linux", bin = "opam" }
+linux-arm64 = { asset_pattern = "opam-{{ version }}-arm64-linux", bin = "opam" }
+macos-x64 = { asset_pattern = "opam-{{ version }}-x86_64-macos", bin = "opam" }
+macos-arm64 = { asset_pattern = "opam-{{ version }}-arm64-macos", bin = "opam" }
 [tasks.bootstrap]
 description = "Create the project-local OCaml 5.5.0 switch and install development dependencies"
 run = """
