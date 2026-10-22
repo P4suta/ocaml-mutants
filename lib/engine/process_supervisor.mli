@@ -49,6 +49,8 @@ val run :
   ?timeout:float ->
   ?cancelled:(unit -> bool) ->
   ?cancel:Cancel.t ->
+  ?stdout_limit:int ->
+  ?stderr_limit:int ->
   cwd:string ->
   env:(string * string option) list ->
   string list ->
@@ -57,7 +59,8 @@ val run :
     platform supervisor. [timeout] is the post-release execution deadline;
     [result.duration] also includes supervised startup and cleanup. Normal
     completion, timeout, cancellation, and spawn failure all reclaim the owned
-    process tree. *)
+    process tree. [stdout_limit] and [stderr_limit] are non-negative retained
+    byte limits; totals continue to count the complete drained streams. *)
 
 val status_string : status -> string
 val succeeded : result -> bool
@@ -72,3 +75,7 @@ val helper_requested : string array -> bool
 val run_helper : string array -> int
 val process_id : int -> int
 val process_is_alive : int -> bool
+
+module For_testing : sig
+  val helper_active_environment : string
+end

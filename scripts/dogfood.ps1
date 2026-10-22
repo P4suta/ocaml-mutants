@@ -120,7 +120,7 @@ try {
     & $python.Source `
         (Join-Path $repoRoot "scripts/verify-dogfood-run.py") `
         $reportPath `
-        --schema (Join-Path $repoRoot "schema/run-report-v1.schema.json") `
+        --schema (Join-Path $repoRoot "schema/run-report-v2.schema.json") `
         --exit-code $runExitCode
     if ($LASTEXITCODE -ne 0) {
         throw "Balanced dogfood report failed acceptance"

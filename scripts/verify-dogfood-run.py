@@ -106,9 +106,9 @@ def mutant_id(result: dict[str, Any], index: int) -> str:
 
 
 def verify_report(report: dict[str, Any], exit_code: int) -> tuple[int, int, int]:
-    if report.get("document_type") != "ocaml-mutants.run-report-v1":
+    if report.get("document_type") != "ocaml-mutants.run-report-v2":
         raise ReportError("unexpected document_type")
-    if report.get("schema_version") != 1:
+    if report.get("schema_version") != 2:
         raise ReportError("unexpected schema_version")
     run_id = report.get("run_id")
     if not isinstance(run_id, str) or not run_id:

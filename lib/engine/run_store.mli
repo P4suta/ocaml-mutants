@@ -17,6 +17,7 @@ type baseline_stage = {
 
 type warning = { code : string; message : string }
 type skip_summary = { reason : string; count : int; examples : string list }
+type hit_map_entry = { test : string; mutant_ids : string list }
 
 type retry_attempt = {
   outcome : Core.Outcome.t;
@@ -30,6 +31,14 @@ type timeout_retry = {
   initial_timeout : retry_attempt;
   serial_retry : retry_attempt;
 }
+
+type evidence_origin =
+  | Execution
+  | Checkpoint_resume
+  | Checkpoint_estimated
+  | Historical_exact
+  | Historical_estimated
+  | Fast_estimated
 
 type expectation_status =
   | Expectation_fulfilled
@@ -51,6 +60,7 @@ type mutant_result = {
   outcome : Core.Outcome.t;
   duration : Core.Duration.t;
   cached : bool;
+  evidence_origin : evidence_origin;
   stages : stage_result list;
   timeout_confirmed : bool;
   timeout_retry : timeout_retry option;
@@ -70,9 +80,15 @@ type metadata = {
   test_command : Core.Nonempty_argv.t;
   baseline_duration : Core.Duration.t option;
   baseline_stages : baseline_stage list;
+  hit_map : hit_map_entry list;
   timeout : Core.Duration.t option;
   cache_mode : string;
+  execution_mode : string;
+  historical_reuse : string;
   cache_key : string;
+  resolved_config : Yojson.Safe.t;
+  input_fingerprint : string;
+  config_digest : string;
 }
 
 type run_status = Completed | Interrupted | Failed of Error.t
@@ -85,16 +101,45 @@ type run = {
   metadata : metadata;
   status : run_status;
   results : mutant_result list;
+  checkpointed : int;
   completeness : completeness;
   expectations : expectation_evaluation list;
   skipped : skip_summary list;
   warnings : warning list;
 }
 
+type summary = {
+  kind : string;
+  total : int;
+  executed : int;
+  not_run : int;
+  killed : int;
+  survived : int;
+  timeout : int;
+  unconfirmed_timeouts : int;
+  inconclusive : int;
+  error : int;
+  expected_survivors : int;
+  unexpected_survivors : int;
+  unfulfilled_expectations : int;
+  detected : int;
+  score : float option;
+}
+
+type evidence_level = Executed | Exact_cache | Estimated
+
+val summary : run -> summary
+val result_evidence_level : mutant_result -> evidence_level
+val evidence_level_name : evidence_level -> string
+val evidence_origin_name : evidence_origin -> string
+val run_evidence_level : run -> evidence_level
+val result_coverage_from_hit_map : hit_map_entry list -> mutant_result -> string
+val result_coverage : run -> mutant_result -> string
 val not_run : run -> Core.Mutant.t list
 
 type t
 type reservation
+type journal
 type staged_run
 type publish_capability
 
@@ -138,6 +183,29 @@ val expectation_status_is_failure : expectation_status -> bool
 val reserve : t -> started_at:string -> (reservation, Error.t) result
 val reservation_id : reservation -> Core.Run_id.t
 val abandon_reservation : t -> reservation -> (unit, Error.t) result
+
+val open_journal :
+  t -> reservation -> key:string -> fresh:bool -> (journal, Error.t) result
+(** Opens the always-on crash-recovery journal for an exact input fingerprint. A
+    previous session is resumed only while its state is explicitly [open].
+    [fresh] starts a new session even when an unfinished one exists. *)
+
+val journal_resumed : journal -> bool
+
+val load_checkpoint :
+  journal ->
+  source:Core.Source.t ->
+  expected:Core.Mutant.t ->
+  (mutant_result option, Error.t) result
+(** Reads one immutable, checksummed settled result. Invalid, truncated, or
+    identity-mismatched records fail closed as a cache miss. *)
+
+val checkpoint_mutant : journal -> mutant_result -> (unit, Error.t) result
+(** Durably creates one immutable checksummed checkpoint. *)
+
+val complete_journal : journal -> (unit, Error.t) result
+(** Atomically closes the journal session so later ordinary runs cannot treat a
+    completed run as crash-recovery input. *)
 
 val stage_run : t -> reservation -> (staged_run, Error.t) result
 (** [stage_run] validates process and store ownership, then consumes the active
@@ -188,8 +256,21 @@ val cacheable_result : mutant_result -> bool
     the shared cache: kills, survivors, and serially confirmed timeouts.
     Inconclusive results, errors, and unconfirmed timeouts are never stored. *)
 
+val checkpointable_result : mutant_result -> bool
+(** Whether a settled result can be persisted in the crash-recovery journal.
+    Unlike historical cache entries, inconclusive and error results remain
+    useful checkpoints; only an unconfirmed timeout is excluded. *)
+
 val save_mutant : t -> key:string -> mutant_result -> (unit, Error.t) result
 val load_run : t -> string -> (run, Error.t) result
+val list_runs : t -> (run list, Error.t) result
+
+(* Returns immutable reports in newest-first run-ID order. *)
+val list_runs_best_effort : t -> run list * (string * Error.t) list
+(** Returns valid immutable reports in newest-first order and separately reports
+    every rejected run ID. This is for interactive history only: policy and
+    report commands must use the strict [list_runs]/[load_run] interfaces. *)
+
 val run_to_yojson : run -> Yojson.Safe.t
 val run_to_string : run -> string
 val run_of_json : Yojson.Safe.t -> (run, string) result

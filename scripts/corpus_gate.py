@@ -535,11 +535,11 @@ def catalog_from_bytes(
         jsonschema.validators.validator_for(schema)(schema).validate(document)
     except jsonschema.exceptions.ValidationError as error:
         raise CorpusError(
-            f"{label} does not satisfy catalog-v1: {error.message}"
+            f"{label} does not satisfy catalog-v2: {error.message}"
         ) from error
-    if document.get("document_type") != "ocaml-mutants.catalog-v1":
+    if document.get("document_type") != "ocaml-mutants.catalog-v2":
         raise CorpusError(f"{label} has the wrong document_type")
-    if document.get("schema_version") != 1:
+    if document.get("schema_version") != 2:
         raise CorpusError(f"{label} has the wrong schema_version")
     if document.get("profile") != "balanced":
         raise CorpusError(f"{label} is not a Balanced catalog")
@@ -579,15 +579,15 @@ def validate_report(
         jsonschema.validators.validator_for(schema)(schema).validate(report)
     except jsonschema.exceptions.ValidationError as error:
         raise CorpusError(
-            f"native report does not satisfy run-report-v1: {error.message}"
+            f"native report does not satisfy run-report-v2: {error.message}"
         ) from error
-    if returncode not in {0, 1}:
+    if returncode != 0:
         raise CorpusError(
-            f"mutation run exited {returncode}; expected an outcome exit (0 or 1)"
+            f"mutation run exited {returncode}; expected complete measurement exit 0"
         )
-    if report.get("document_type") != "ocaml-mutants.run-report-v1":
+    if report.get("document_type") != "ocaml-mutants.run-report-v2":
         raise CorpusError("native report has the wrong document_type")
-    if report.get("schema_version") != 1 or report.get("profile") != "balanced":
+    if report.get("schema_version") != 2 or report.get("profile") != "balanced":
         raise CorpusError("native report has the wrong schema version or profile")
     if report.get("status") != "completed" or report.get("failure") is not None:
         raise CorpusError("native report records an infrastructure failure")
@@ -1599,12 +1599,12 @@ def execute(manifest_path: Path) -> None:
     try:
         runner = CommandRunner(manifest, session)
         catalog_schema = _read_schema(
-            engine_root / "schema" / "catalog-v1.schema.json",
-            "catalog-v1",
+            engine_root / "schema" / "catalog-v2.schema.json",
+            "catalog-v2",
         )
         report_schema = _read_schema(
-            engine_root / "schema" / "run-report-v1.schema.json",
-            "run-report-v1",
+            engine_root / "schema" / "run-report-v2.schema.json",
+            "run-report-v2",
         )
         opam_root, switch, opam_env = ensure_switch(
             runner, manifest, root, engine_root

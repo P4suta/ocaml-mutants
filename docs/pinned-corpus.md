@@ -61,17 +61,17 @@ manifest-declared `_build` or `_opam` artifact kinds; arbitrary exclusions are
 rejected and an excluded root may not contain tracked files. Absolute links,
 escaping links, symlinked artifact roots, and reparse-point roots are rejected.
 
-Catalogs are checked against `catalog-v1`. Every native run report is checked
-against `run-report-v1`, and must have:
+Catalogs are checked against `catalog-v2`. Every native run report is checked
+against `run-report-v2`, and must have:
 
 - completed, failure-free infrastructure state;
 - exactly the selected full IDs, with `not_run = 0`;
 - no `error` or `inconclusive` result;
 - no unconfirmed timeout.
 
-Exit 0 and exit 1 are both outcome exits: an upstream corpus may contain real
-survivors. Exit 2, interruption, a partial report, or missing selected result is
-an infrastructure failure. Accepted catalogs, reports, and a compact summary
+Run exits 0 after complete measurement even when an upstream corpus contains
+real survivors. Exit 2, interruption, a partial report, or a missing selected
+result is an infrastructure failure. Accepted catalogs, reports, and a compact summary
 remain below the marker-owned `evidence` directory.
 
 ## Commands

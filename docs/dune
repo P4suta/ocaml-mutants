@@ -1,4 +1,15 @@
 (install
  (section share)
  (package ocaml-mutants)
- (files json-schema.md))
+ (files
+  json-schema.md
+  (quickstart.md as docs/quickstart.md)
+  (configuration.md as docs/configuration.md)
+  (tui.md as docs/tui.md)
+  (evidence.md as docs/evidence.md)
+  (ci-sharding.md as docs/ci-sharding.md)
+  (github-actions-sharding.yml as docs/github-actions-sharding.yml)
+  (migration-v1.md as docs/migration-v1.md)
+  (expectations.md as docs/expectations.md)
+  (privacy.md as docs/privacy.md)
+  (troubleshooting.md as docs/troubleshooting.md)))

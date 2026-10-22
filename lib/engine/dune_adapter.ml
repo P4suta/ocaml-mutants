@@ -34,41 +34,71 @@ module type PROCESS = sig
   val status : result -> string
 end
 
-let normalize_cmt_target value =
+let safe_relative_path path =
+  path <> "" && Filename.is_relative path
+  && not
+       (String.split_on_char '/' path
+       |> List.exists (fun component -> component = ".."))
+
+let build_relative value =
   let normalized = Ocaml_mutants_core.Mutant.normalize_path value in
   let marker = "_build/default/" in
   let rec find index =
     if index + String.length marker > String.length normalized then None
-    else if String.sub normalized index (String.length marker) = marker then
-      Some (index + String.length marker)
+    else if
+      String.sub normalized index (String.length marker) = marker
+      && (index = 0 || normalized.[index - 1] = '/')
+    then Some (index + String.length marker)
     else find (index + 1)
   in
   match find 0 with
   | Some start ->
-      Some (String.sub normalized start (String.length normalized - start))
-  | None when Filename.is_relative value -> Some normalized
+      let relative =
+        String.sub normalized start (String.length normalized - start)
+      in
+      if safe_relative_path relative then Some relative else None
+  | None when Filename.is_relative value && safe_relative_path normalized ->
+      Some normalized
   | None -> None
 
-let normalize_source ~root value =
-  let normalized = Ocaml_mutants_core.Mutant.normalize_path value in
-  let marker = "_build/default/" in
-  let rec find index =
-    if index + String.length marker > String.length normalized then None
-    else if String.sub normalized index (String.length marker) = marker then
-      Some (index + String.length marker)
-    else find (index + 1)
+let normalize_cmt_target = build_relative
+
+let canonical_relative ~root path =
+  let normalize path =
+    let normalized = Ocaml_mutants_core.Mutant.normalize_path path in
+    if Sys.win32 then String.lowercase_ascii normalized else normalized
   in
-  let candidate =
-    match find 0 with
-    | Some start ->
-        Filename.concat root
-          (String.sub normalized start (String.length normalized - start))
-    | None when Filename.is_relative value -> Filename.concat root value
+  let canonical_root = Unix.realpath root in
+  let canonical_path = Unix.realpath path in
+  let compared_root = normalize canonical_root in
+  let compared_path = normalize canonical_path in
+  let prefix = compared_root ^ "/" in
+  if string_starts_with ~prefix compared_path then
+    let normalized_path =
+      Ocaml_mutants_core.Mutant.normalize_path canonical_path
+    in
+    let relative =
+      String.sub normalized_path
+        (String.length compared_root + 1)
+        (String.length normalized_path - String.length compared_root - 1)
+    in
+    if safe_relative_path relative then Some relative else None
+  else None
+
+let normalize_source ~root value =
+  let candidate = build_relative value in
+  let path =
+    match candidate with
+    | Some relative -> Filename.concat root relative
     | None -> value
   in
-  if Sys.file_exists candidate && not (Sys.is_directory candidate) then
-    try Some (normalize_relative ~root candidate)
-    with Unix.Unix_error _ -> None
+  if Sys.file_exists path && not (Sys.is_directory path) then
+    match candidate with
+    | Some relative -> Some relative
+    | None when not (Filename.is_relative value) -> (
+        try canonical_relative ~root value
+        with Unix.Unix_error _ | Sys_error _ -> None)
+    | None -> None
   else None
 
 let record = function
@@ -327,7 +357,7 @@ module Make (Process : PROCESS) = struct
     let locked =
       with_analysis_lock ~cancel (fun () ->
           Process.run ~cancel ~cwd:root
-            ~env:[ ("DUNE_CACHE", Some "disabled") ]
+            ~env:(Test_command.dune_cache_environment ~root)
             ([ "dune"; "build"; "--build-dir"; build_dir; "@all" ] @ cmt_targets))
     in
     let* result = locked in

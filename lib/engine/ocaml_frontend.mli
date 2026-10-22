@@ -31,4 +31,8 @@ val discover :
 val instrument_files :
   root:string -> Ocaml_mutants_core.Catalog.t -> (string list, Error.t) result
 
+val instrumentation_owner : Ocaml_mutants_core.Catalog.t -> string
+(** Stable ownership token embedded in every runtime generated for one catalog.
+    A readiness hit file accepts writes only from runtimes with this token. *)
+
 val skip_reason_name : skip_reason -> string

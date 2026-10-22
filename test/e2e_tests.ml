@@ -92,8 +92,15 @@ let store_env =
   at_exit (fun () -> ignore (Util.remove_tree root));
   [ ((if Sys.win32 then "LOCALAPPDATA" else "XDG_CACHE_HOME"), Some root) ]
 
+(* Dune's POSIX sandbox presents declared dependency files as symlinks into the
+   default build context. Resolve the dependency itself before taking its parent
+   so the fixture root is the complete build-context tree, rather than a sandbox
+   directory whose children legitimately point outside that directory. *)
+let fixture_root fixture_project =
+  fixture_project |> Unix.realpath |> Filename.dirname
+
 let check_list ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   let before =
     match Util.digest_tree ~skip:Workspace_snapshot.default_skip fixture with
     | Ok value -> value
@@ -127,7 +134,7 @@ let check_list ~cli fixture_project =
   let document_type =
     Yojson.Safe.Util.(json |> member "document_type" |> to_string)
   in
-  if document_type <> "ocaml-mutants.catalog-v1" then
+  if document_type <> "ocaml-mutants.catalog-v2" then
     fail "unexpected list JSON document type: %s" document_type;
   let fixture_name = Filename.basename fixture in
   if fixture_name = "ppx-imprecise" then (
@@ -318,7 +325,7 @@ let check_list ~cli fixture_project =
   if before <> after then fail "ocaml-mutants changed the source fixture"
 
 let check_custom_command ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   let before =
     match Util.digest_tree ~skip:Workspace_snapshot.default_skip fixture with
     | Ok value -> value
@@ -334,6 +341,7 @@ let check_custom_command ~cli fixture_project =
         "1";
         "--timeout";
         "10";
+        "--json";
         "--";
         "dune";
         "exec";
@@ -344,6 +352,73 @@ let check_custom_command ~cli fixture_project =
     fail "custom-command E2E failed (%s):\n%s%s"
       (Process_supervisor.status_string process.status)
       process.stdout process.stderr;
+  let report =
+    try Yojson.Safe.from_string process.stdout
+    with Yojson.Json_error message ->
+      fail "invalid custom-command report JSON: %s" message
+  in
+  let hit_map =
+    Yojson.Safe.Util.(
+      report |> member "test" |> member "inventory" |> member "hit_map"
+      |> to_list)
+  in
+  if hit_map = [] then fail "custom-command report omitted runtime hit evidence";
+  let mutants = Yojson.Safe.Util.(report |> member "mutants" |> to_list) in
+  let fast_estimates =
+    List.filter
+      (fun result ->
+        Yojson.Safe.Util.(
+          result |> member "evidence" |> member "origin" |> to_string)
+        = "fast-estimated")
+      mutants
+  in
+  if fast_estimates = [] then
+    fail "custom-command fast run omitted no non-covering test evidence";
+  List.iter
+    (fun result ->
+      let open Yojson.Safe.Util in
+      if result |> member "coverage" |> to_string <> "not-covered" then
+        fail "fast-estimated result was not marked not-covered";
+      if result |> member "stages" |> to_list <> [] then
+        fail "fast-estimated result retained an executed stage")
+    fast_estimates;
+  if
+    not
+      (List.exists
+         (fun result ->
+           Yojson.Safe.Util.(
+             result |> member "evidence" |> member "origin" |> to_string)
+           = "execution")
+         mutants)
+  then fail "custom-command fast run lost all executed evidence";
+  if contains_substring ~needle:"privacy-secret" process.stdout then
+    fail "custom-command report retained a configured privacy literal";
+  if not (contains_substring ~needle:"**************" process.stdout) then
+    fail "custom-command report did not retain redaction evidence";
+  let dash_output = Filename.concat fixture "-" in
+  if Sys.file_exists dash_output then
+    fail "custom-command fixture already contains a '-' output path";
+  let multiple_stdout =
+    Process_supervisor.run ~timeout:30. ~cwd:fixture ~env:store_env
+      [
+        cli;
+        "report";
+        ".";
+        "--format";
+        "json";
+        "--format";
+        "markdown";
+        "--output";
+        "-";
+      ]
+  in
+  (match multiple_stdout.status with
+  | Process_supervisor.Exited 2 -> ()
+  | _ ->
+      fail "multiple report formats accepted --output - (%s)"
+        (Process_supervisor.status_string multiple_stdout.status));
+  if Sys.file_exists dash_output then
+    fail "multiple report formats created a '-' directory";
   let after =
     match Util.digest_tree ~skip:Workspace_snapshot.default_skip fixture with
     | Ok value -> value
@@ -385,7 +460,7 @@ let parse_json label process =
     fail "invalid %s JSON: %s\n%s" label message process.stdout
 
 let check_timeout ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   let catalog =
     Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:store_env
       [ cli; "list"; "."; "--json"; "--no-color" ]
@@ -427,13 +502,13 @@ let check_timeout ~cli fixture_project =
    still compiles under the default fatal-warning dev profile, and pins the
    all-survivors score at exactly 0. *)
 let check_match_run ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   let process =
     Process_supervisor.run ~timeout:600. ~cwd:fixture ~env:store_env
       [ cli; "run"; "."; "--json"; "--fresh"; "--jobs"; "1" ]
   in
   (match process.status with
-  | Process_supervisor.Exited 1 -> ()
+  | Process_supervisor.Exited 0 -> ()
   | _ ->
       fail "match run E2E returned %s:\n%s%s"
         (Process_supervisor.status_string process.status)
@@ -452,7 +527,7 @@ let check_match_run ~cli fixture_project =
     fail "match run without tests did not score exactly zero"
 
 let check_baseline_failure ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   let explicit_timeout_seconds = 17. in
   let process =
     Process_supervisor.run ~timeout:120. ~cwd:fixture ~env:store_env
@@ -490,7 +565,7 @@ let check_baseline_failure ~cli fixture_project =
   then fail "baseline failure report used the wrong phase"
 
 let check_dirty_git_workspace ~cli fixture_project =
-  let fixture = Filename.dirname fixture_project |> Unix.realpath in
+  let fixture = fixture_root fixture_project in
   match
     Workspace_snapshot.with_snapshot fixture (fun snapshot ->
         let root = Workspace_snapshot.root snapshot in
@@ -583,23 +658,23 @@ let run () =
   List.iter (check_list ~cli) fixtures;
   fixtures
   |> List.find_opt (fun project ->
-      Filename.basename (Filename.dirname project) = "custom-command")
+      Filename.basename (fixture_root project) = "custom-command")
   |> Option.iter (check_custom_command ~cli);
   fixtures
   |> List.find_opt (fun project ->
-      Filename.basename (Filename.dirname project) = "timeout")
+      Filename.basename (fixture_root project) = "timeout")
   |> Option.iter (check_timeout ~cli);
   fixtures
   |> List.find_opt (fun project ->
-      Filename.basename (Filename.dirname project) = "baseline-failure")
+      Filename.basename (fixture_root project) = "baseline-failure")
   |> Option.iter (check_baseline_failure ~cli);
   fixtures
   |> List.find_opt (fun project ->
-      Filename.basename (Filename.dirname project) = "match")
+      Filename.basename (fixture_root project) = "match")
   |> Option.iter (check_match_run ~cli);
   fixtures
   |> List.find_opt (fun project ->
-      Filename.basename (Filename.dirname project) = "basic")
+      Filename.basename (fixture_root project) = "basic")
   |> Option.iter (check_dirty_git_workspace ~cli)
 
 let () =
