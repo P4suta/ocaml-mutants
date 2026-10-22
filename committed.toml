@@ -3,5 +3,18 @@
 # ceiling so the gate stays green over the existing history.
 subject_length = 80
 line_length = 100
-style = "none"
+style = "conventional"
+subject_capitalized = false
+allowed_types = [
+  "fix",
+  "feat",
+  "chore",
+  "docs",
+  "style",
+  "refactor",
+  "perf",
+  "test",
+  "build",
+  "ci",
+]
 merge_commit = false

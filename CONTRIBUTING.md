@@ -32,8 +32,7 @@ CI enforces the same pinned gates as `mise run check`: build, tests,
 committed, plus a Balanced self-catalog determinism job. `mise run hooks`
 installs the matching pre-commit and commit-msg hooks.
 
-Keep commits focused and use imperative commit messages: subjects of at most
-72 characters (80 is the hard `committed.toml` ceiling), wrapped bodies. By
-contributing, you agree that your work may be distributed under
-`MIT OR Apache-2.0`.
+Use Conventional Commits with imperative descriptions.
+Aim for subjects of at most 72 characters; `committed.toml` enforces a subject ceiling of 80 characters and body lines of 100 characters.
+By contributing, you agree that your work may be distributed under `MIT OR Apache-2.0`.
 
