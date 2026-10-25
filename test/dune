@@ -94,6 +94,17 @@
   (run %{exe:dune_adapter_contract_tests.exe})))
 
 (test
+ (name test_command_contract_tests)
+ (libraries ocaml_mutants_core ocaml_mutants_engine alcotest))
+
+(rule
+ (alias dogfood-fast)
+ (deps
+  (env_var OCAML_MUTANTS_ACTIVE))
+ (action
+  (run %{exe:test_command_contract_tests.exe})))
+
+(test
  (name baseline_contract_tests)
  (libraries ocaml_mutants_core ocaml_mutants_engine alcotest))
 

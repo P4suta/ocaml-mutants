@@ -51,7 +51,14 @@ module Store_path = struct
       (Cache_fs.Relative.components path)
 end
 
-type captured = { contents : string; truncated : bool; total_bytes : int }
+type captured = {
+  contents : string;
+  truncated : bool;
+  total_bytes : int;
+  retained_raw_sha256 : string;
+  encoding_errors : int;
+  raw_for_merge : string option;
+}
 
 type stage_result = {
   name : string;
@@ -358,10 +365,14 @@ let next_process_reservation_sequence () =
           Ok current)
 
 let captured ?(truncated = false) ?total_bytes contents =
+  let normalized = Evidence_text.normalize contents in
   {
-    contents;
+    contents = normalized.contents;
     truncated;
     total_bytes = Option.value total_bytes ~default:(String.length contents);
+    retained_raw_sha256 = normalized.retained_raw_sha256;
+    encoding_errors = normalized.encoding_errors;
+    raw_for_merge = Some contents;
   }
 
 let cache_root () =
@@ -1982,6 +1993,8 @@ let captured_to_json captured =
       ("contents", `String captured.contents);
       ("truncated", `Bool captured.truncated);
       ("total_bytes", `Int captured.total_bytes);
+      ("retained_raw_sha256", `String captured.retained_raw_sha256);
+      ("encoding_errors", `Int captured.encoding_errors);
     ]
 
 let captured_of_json json =
@@ -1989,12 +2002,36 @@ let captured_of_json json =
   let contents = json |> member "contents" |> to_string in
   let truncated = json |> member "truncated" |> to_bool in
   let total_bytes = json |> member "total_bytes" |> to_int in
+  let retained_raw_sha256 =
+    json |> member "retained_raw_sha256" |> to_string
+  in
+  let encoding_errors = json |> member "encoding_errors" |> to_int in
   let retained_bytes = String.length contents in
-  if total_bytes < retained_bytes then
+  let normalized = Evidence_text.normalize contents in
+  if normalized.encoding_errors <> 0 then
+    Error "captured contents is not well-formed UTF-8"
+  else if not (Evidence_text.valid_sha256 retained_raw_sha256) then
+    Error "captured retained_raw_sha256 is not canonical SHA-256"
+  else if encoding_errors < 0 then
+    Error "captured encoding_errors is negative"
+  else if
+    encoding_errors = 0
+    && not (String.equal retained_raw_sha256 normalized.retained_raw_sha256)
+  then Error "captured raw digest contradicts lossless UTF-8 contents"
+  else if total_bytes < retained_bytes then
     Error "captured total byte count is smaller than retained output"
   else if (not truncated) && total_bytes <> retained_bytes then
     Error "untruncated output byte count contradicts retained output"
-  else Ok { contents; truncated; total_bytes }
+  else
+    Ok
+      {
+        contents;
+        truncated;
+        total_bytes;
+        retained_raw_sha256;
+        encoding_errors;
+        raw_for_merge = if encoding_errors = 0 then Some contents else None;
+      }
 
 let stage_result_to_json (stage : stage_result) =
   `Assoc
