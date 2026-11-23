@@ -5,6 +5,21 @@ for its CLI, TOML schema, and JSON schema.
 
 ## [Unreleased]
 
+### Fixed
+
+- Native report stdout/stderr captures now form a strict UTF-8 evidence
+  boundary. Ill-formed process bytes are replaced one-for-one with `?`, while
+  `encoding_errors` and `retained_raw_sha256` retain the damage count and exact
+  identity of the pre-normalized retained bytes. This prevents a mutant from
+  corrupting the report JSON while preserving byte counts and offsets. This is
+  a pre-release `run-report-v1` schema change.
+- Configured `dune build`, `dune runtest`, and `dune test` stages now receive a
+  private build directory for every baseline stage and mutation worker, not
+  only the exact default command. Such stages are consequently recognized as
+  safely parallel; explicit `--build-dir` arguments and all other commands are
+  left untouched. Concurrent staged campaigns can no longer misclassify a
+  mutant because two Dune processes contended for one build lock.
+
 ## [0.1.0] - 2026-08-20
 
 ### Fixed

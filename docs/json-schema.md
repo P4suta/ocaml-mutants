@@ -29,13 +29,19 @@ surface through exit code 2. A score of 100 therefore coincides with exit
 code 0. The engine records the score as diagnostic output; it applies no
 threshold policy to it.
 
-Each executed mutant has a concrete versioned rule, separate stdout and stderr
-captures, total byte counts, and truncation flags. IDs include the 20-hex display
-prefix and the full SHA-256 identity. A timeout retry retains the initial timeout
-and serial retry as separate attempts, including each attempt's outcome, stage
-timings, duration, and captured output. The top-level expectation ledger uses
-explicit `fulfilled`, killed/timeout unfulfilled, `inconclusive`, `error`,
-`stale`, and partial-selection `not-evaluated` states.
+Each executed mutant has a concrete versioned rule and separate bounded stdout
+and stderr captures. Every capture records its total byte count, truncation
+flag, `encoding_errors`, and `retained_raw_sha256`. Well-formed UTF-8 is retained
+byte-for-byte. Each byte that cannot participate in a well-formed UTF-8 scalar
+is represented by one ASCII `?`, preserving the capture's byte length and
+offsets; the error counter and digest identify the exact pre-normalized retained
+bytes without allowing process output to make the JSON document ill-formed.
+IDs include the 20-hex display prefix and the full SHA-256 identity. A timeout
+retry retains the initial timeout and serial retry as separate attempts,
+including each attempt's outcome, stage timings, duration, and captured output.
+The top-level expectation ledger uses explicit `fulfilled`, killed/timeout
+unfulfilled, `inconclusive`, `error`, `stale`, and partial-selection
+`not-evaluated` states.
 
 ## `ocaml-mutants.catalog-v1`
 

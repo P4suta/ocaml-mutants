@@ -114,11 +114,13 @@
     },
     "captured": {
       "type": "object",
-      "required": ["contents", "truncated", "total_bytes"],
+      "required": ["contents", "truncated", "total_bytes", "retained_raw_sha256", "encoding_errors"],
       "properties": {
         "contents": { "type": "string" },
         "truncated": { "type": "boolean" },
-        "total_bytes": { "type": "integer", "minimum": 0 }
+        "total_bytes": { "type": "integer", "minimum": 0 },
+        "retained_raw_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "encoding_errors": { "type": "integer", "minimum": 0 }
       },
       "additionalProperties": false
     },
