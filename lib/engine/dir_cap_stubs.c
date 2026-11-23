@@ -156,7 +156,7 @@ enum dc_injection_site {
 /* Test-only, process-local, and one-shot.  Keeping the whole request in one
    atomic word prevents a concurrent native call from observing a partially
    installed injection. */
-static atomic_uint dc_test_injection = ATOMIC_VAR_INIT(0);
+static atomic_uint dc_test_injection = 0;
 #define DC_INJECT_ACTION 1u
 #define DC_INJECT_CLOSE 2u
 #define DC_INJECT_SITE_SHIFT 2u
